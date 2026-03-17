@@ -10,7 +10,6 @@ export default function SecretSanta() {
   const [eventDate, setEventDate] = useState(''); 
   const [budget, setBudget] = useState(''); 
   
-  // États pour la modification depuis la vue organisateur
   const [editBudget, setEditBudget] = useState(''); 
   const [editGroupName, setEditGroupName] = useState('');
   
@@ -54,11 +53,11 @@ export default function SecretSanta() {
     if (!error && data) setMesGroupes(data);
   };
 
+  // NOUVEAU : Redirection propre vers la page de login
   const handleLogin = () => {
     window.location.href = '/login';
   };
 
-  // NOUVEAU : Fonction unique pour mettre à jour les paramètres du groupe
   const updateGroupSettings = async () => {
     if (!selectedGroup) return;
     if (editGroupName.trim() === '') return alert("Le nom du groupe ne peut pas être vide.");
@@ -142,7 +141,6 @@ export default function SecretSanta() {
     setLoading(false);
   };
 
-  // NOUVEAU : Fonction pour copier le lien magique
   const copyMagicLink = (participantId: string, participantName: string) => {
     const link = `${window.location.origin}/wishlist/${selectedGroup.id}?p=${participantId}`;
     navigator.clipboard.writeText(link).then(() => {
@@ -164,11 +162,17 @@ export default function SecretSanta() {
             <button onClick={toggleTheme} className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                 {isDark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
-            {user && (
+            
+            {/* NOUVEAU : BOUTON SE CONNECTER SI PAS D'UTILISATEUR */}
+            {user ? (
               <button onClick={() => { supabase.auth.signOut(); setUser(null); setStep('home'); }} 
               className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center gap-2 text-xs">
                 <LogOut size={18} /> <span className="hidden md:block">DÉCONNEXION</span>
               </button>
+            ) : (
+              <a href="/login" className={`p-3 rounded-xl border-4 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center gap-2 text-xs font-black ${isDark ? 'bg-slate-800 text-white border-slate-700 hover:bg-slate-700' : 'bg-white text-slate-900 border-slate-900 hover:bg-slate-100'}`}>
+                SE CONNECTER
+              </a>
             )}
           </div>
         </div>
@@ -292,7 +296,6 @@ export default function SecretSanta() {
                 )}
             </div>
             
-            {/* PARAMÈTRES DU GROUPE (Remplace l'ancienne idée rapide) */}
             <div className="mb-12 p-8 bg-slate-900 border-4 border-slate-900 rounded-[2.5rem] text-white shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] transform -rotate-1">
               <h3 className="flex items-center gap-2 text-sm text-red-400 mb-6 font-black"><List size={18}/> PARAMÈTRES DU GROUPE</h3>
               <div className="space-y-4">
@@ -331,8 +334,6 @@ export default function SecretSanta() {
                   <div key={p.id} className={`p-6 md:p-8 rounded-3xl border-[4px] flex flex-col gap-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-slate-50 border-slate-900'}`}>
                     
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      
-                      {/* NOUVEAU : LE BOUTON COPIER */}
                       <div className="flex items-center gap-4">
                         <span className="text-3xl">{p.name}</span>
                         <button 
