@@ -3,17 +3,26 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, Lock, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
-// NOUVEAU PARSER : Ultra robuste, il transforme tout en "Liste de bulles"
+// NOUVEAU : Fonction pour forcer le "https://" sur les liens
+const formatUrl = (url: string) => {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    return `https://${trimmed}`;
+  }
+  return trimmed;
+};
+
+// Parser sécurisé (inchangé, on clone juste les listes pour éviter les bugs)
 const parseWishlist = (raw: any) => {
   const defaultData = { mine: [], others: [] };
   if (!raw) return defaultData;
   
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    let mine = Array.isArray(parsed?.mine) ? parsed.mine : [];
-    let others = Array.isArray(parsed?.others) ? parsed.others : [];
+    let mine = Array.isArray(parsed?.mine) ? [...parsed.mine] : [];
+    let others = Array.isArray(parsed?.others) ? [...parsed.others] : [];
 
-    // Récupération des anciennes données (Migration automatique)
     if (parsed?.mine && !Array.isArray(parsed.mine) && parsed.mine.text) {
       mine.push({ id: Date.now().toString(), text: parsed.mine.text, url: parsed.mine.url });
     }
@@ -22,7 +31,6 @@ const parseWishlist = (raw: any) => {
     }
     return { mine, others };
   } catch {
-    // Si c'était du texte tout simple de la V1
     if (typeof raw === 'string' && raw.trim() !== '') {
         return { mine: [{ id: Date.now().toString(), text: raw, url: '' }], others: [] };
     }
@@ -40,7 +48,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
 
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
-  // Champs pour les nouvelles idées
   const [newMyText, setNewMyText] = useState("");
   const [newMyUrl, setNewMyUrl] = useState("");
   const [newOtherText, setNewOtherText] = useState("");
@@ -76,7 +83,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   useEffect(() => {
     loadData();
 
-    // TEMPS RÉEL
     const channel = supabase.channel(`group-${params.groupId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'participants', filter: `group_id=eq.${params.groupId}` }, 
       (payload) => {
@@ -86,25 +92,28 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     return () => { supabase.removeChannel(channel); };
   }, [params.groupId, loadData]);
 
-  // SAUVEGARDE GLOBALE : On enregistre le JSON complet pour la personne ciblée
+  // LA CORRECTION EST ICI : On vérifie si Supabase refuse l'enregistrement
   const saveToDb = async (userId: string, dataObj: any) => {
     setSavingId(userId);
     const jsonStr = JSON.stringify(dataObj);
     
-    await supabase.from('participants').update({ wishlist: jsonStr }).eq('id', userId);
+    const { error } = await supabase.from('participants').update({ wishlist: jsonStr }).eq('id', userId);
     
-    // Mise à jour locale immédiate pour que ce soit fluide
-    setGroupParticipants(prev => prev.map(p => p.id === userId ? { ...p, wishlist: jsonStr } : p));
-    if (userId === me.id) setMe({ ...me, wishlist: jsonStr });
+    if (error) {
+      alert("⚠️ Supabase a bloqué la sauvegarde ! \nErreur : " + error.message + "\n\n👉 Va sur Supabase > Table Editor > 'participants' > Et désactive le 'RLS' (Row Level Security) en haut à droite !");
+    } else {
+      setGroupParticipants(prev => prev.map(p => p.id === userId ? { ...p, wishlist: jsonStr } : p));
+      if (userId === me.id) setMe({ ...me, wishlist: jsonStr });
+    }
     
     setSavingId(null);
   };
 
-  // ACTIONS POUR MES IDÉES (BULLES VERTES)
   const addMyIdea = () => {
     if (!newMyText.trim()) return;
     const currentData = parseWishlist(me.wishlist);
-    currentData.mine.push({ id: Date.now().toString(), text: newMyText, url: newMyUrl });
+    // On utilise formatUrl ici pour corriger "amazon.com"
+    currentData.mine.push({ id: Date.now().toString(), text: newMyText, url: formatUrl(newMyUrl) });
     saveToDb(me.id, currentData);
     setNewMyText(""); setNewMyUrl("");
   };
@@ -115,7 +124,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     saveToDb(me.id, currentData);
   };
 
-  // ACTIONS POUR LES IDÉES DU GROUPE (BULLES NOIRES)
   const addOtherIdea = (targetId: string, currentWishlist: any) => {
     if (!newOtherText.trim()) return;
     const currentData = parseWishlist(currentWishlist);
@@ -138,11 +146,11 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const isLookingAtMyself = selectedUser.id === me.id;
   const selectedData = parseWishlist(selectedUser.wishlist);
 
+  // AUCUN CHANGEMENT SUR LE DESIGN CI-DESSOUS, C'EST 100% IDENTIQUE
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-black italic uppercase tracking-tighter text-slate-900">
       <div className="max-w-6xl mx-auto space-y-8">
         
-        {/* HEADER */}
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b-4 border-slate-900 pb-6">
           <div>
             <div className="bg-red-600 text-white px-4 py-1 rounded-full text-sm inline-block mb-2 shadow-sm">{groupName} 🎄</div>
@@ -151,10 +159,8 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
           <p className="text-xs opacity-50 max-w-xs text-right hidden md:block">CLIQUE SUR UN PARTICIPANT POUR VOIR SA LISTE OU LUI SOUFFLER DES IDÉES.</p>
         </div>
 
-        {/* LAYOUT PRINCIPAL */}
         <div className="flex flex-col md:flex-row gap-8">
           
-          {/* COLONNE GAUCHE : LISTE */}
           <div className="w-full md:w-1/3 flex flex-col gap-4">
             <h2 className="text-xl flex items-center gap-2"><User size={20}/> PARTICIPANTS</h2>
             <div className="flex flex-col gap-3">
@@ -180,7 +186,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
             </div>
           </div>
 
-          {/* COLONNE DROITE : DETAIL DU PARTICIPANT */}
           <div className="w-full md:w-2/3">
             <div className="bg-white border-4 border-slate-900 rounded-[3rem] p-6 md:p-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] relative overflow-hidden">
               
@@ -194,14 +199,12 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
 
               <div className="space-y-8">
                 
-                {/* ZONE 1 : BULLES VERTES (Ses idées) */}
                 <div className="bg-green-50 border-4 border-green-500 rounded-3xl p-6 relative">
                   <p className="text-xs text-green-700 mb-6 flex items-center gap-2">
                     <CheckCircle2 size={16} /> 
                     {isLookingAtMyself ? "MA WISHLIST PERSONNELLE :" : `LES ENVIES DE ${selectedUser.name} :`}
                   </p>
                   
-                  {/* Liste des bulles vertes */}
                   <div className="space-y-3 mb-6">
                     {selectedData.mine.length === 0 && <p className="opacity-40 text-lg text-green-800">Aucune idée pour l'instant...</p>}
                     {selectedData.mine.map((idea: any) => (
@@ -221,7 +224,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                     ))}
                   </div>
 
-                  {/* Ajouter une idée (Uniquement si c'est moi) */}
                   {isLookingAtMyself && (
                     <div className="bg-white p-4 rounded-2xl border-2 border-green-200">
                       <input 
@@ -246,18 +248,15 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                   )}
                 </div>
 
-                {/* ZONE 2 : BULLES NOIRES (Idées du groupe) */}
                 <div className="bg-slate-900 text-white border-4 border-slate-900 rounded-3xl p-6 relative transform rotate-1">
                   
                   {isLookingAtMyself ? (
-                    // C'est moi : ESPACE SECRET
                     <div className="text-center py-8 opacity-80 space-y-4">
                       <Lock className="mx-auto text-red-500 mb-2" size={40} />
                       <p className="text-xl text-slate-300">ESPACE SECRET</p>
                       <p className="text-xs text-slate-500">LES IDÉES QUE LE GROUPE TE PRÉPARE SONT CACHÉES ICI.<br/>ON GARDE LA SURPRISE ! 🤫</p>
                     </div>
                   ) : (
-                    // C'est un autre : ZONE DE DISCUSSION
                     <div>
                       <div className="flex justify-between items-center mb-6">
                         <p className="text-xs text-red-500 flex items-center gap-2">
@@ -265,7 +264,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                         </p>
                       </div>
 
-                      {/* Liste des bulles noires */}
                       <div className="space-y-3 mb-6">
                          {selectedData.others.length === 0 && <p className="opacity-40 text-lg">Aucune idée suggérée...</p>}
                          {selectedData.others.map((idea: any) => (
@@ -279,7 +277,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                         ))}
                       </div>
 
-                      {/* Ajouter une bulle noire */}
                       <div className="bg-slate-800 p-3 rounded-2xl border-2 border-slate-700 flex items-center gap-2">
                         <input 
                           className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-sm text-white font-black italic placeholder:text-slate-500"
