@@ -3,14 +3,21 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, MessageSquare } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
-// Fonction pour séparer "Mes idées" (avec URL) et "Les idées du groupe"
-const parseWishlist = (raw: string) => {
+// Fonction 100% blindée anti-crash
+const parseWishlist = (raw: any) => {
+  if (!raw) return { mine: { text: '', url: '' }, others: '' };
   try {
-    const parsed = JSON.parse(raw);
-    if (parsed.mine !== undefined) return parsed;
-    return { mine: { text: parsed.text || '', url: parsed.url || '' }, others: '' };
+    const parsed = typeof raw === 'object' ? raw : JSON.parse(raw);
+    return { 
+      mine: { 
+        text: parsed?.mine?.text || parsed?.text || '', 
+        url: parsed?.mine?.url || parsed?.url || '' 
+      }, 
+      others: parsed?.others || '' 
+    };
   } catch {
-    return { mine: { text: raw || '', url: '' }, others: '' };
+    // Si c'est l'ancien format texte, on le convertit sans planter
+    return { mine: { text: String(raw), url: '' }, others: '' };
   }
 };
 
@@ -20,32 +27,53 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
+  const [dbError, setDbError] = useState("");
 
-  // États locaux pour TES idées
   const [myText, setMyText] = useState("");
   const [myUrl, setMyUrl] = useState("");
 
   const loadData = useCallback(async () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const myId = urlParams.get('p');
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const myId = urlParams.get('p');
 
-    if (!myId) {
-      setLoading(false);
-      return;
-    }
+      if (!myId) {
+        setDbError("Lien incomplet : Il manque ton ID secret (?p=...)");
+        setLoading(false);
+        return;
+      }
 
-    const { data: myData } = await supabase.from('participants').select('*, groups(name)').eq('id', myId).single();
+      // On va chercher le profil
+      const { data: myData, error: meError } = await supabase
+        .from('participants')
+        .select('*, groups(name)')
+        .eq('id', myId)
+        .single();
 
-    if (myData) {
-      setMe(myData);
-      setGroupName(myData.groups?.name || "Mon Groupe");
-      
-      const myParsed = parseWishlist(myData.wishlist);
-      setMyText(myParsed.mine.text);
-      setMyUrl(myParsed.mine.url);
+      if (meError) {
+        setDbError(meError.message);
+        setLoading(false);
+        return;
+      }
 
-      const { data: groupData } = await supabase.from('participants').select('*').eq('group_id', myData.group_id).order('name', { ascending: true });
-      if (groupData) setGroupParticipants(groupData);
+      if (myData) {
+        setMe(myData);
+        setGroupName(myData.groups?.name || "Mon Groupe");
+        
+        const myParsed = parseWishlist(myData.wishlist);
+        setMyText(myParsed.mine.text);
+        setMyUrl(myParsed.mine.url);
+
+        const { data: groupData } = await supabase
+          .from('participants')
+          .select('*')
+          .eq('group_id', myData.group_id)
+          .order('name', { ascending: true });
+          
+        if (groupData) setGroupParticipants(groupData);
+      }
+    } catch (err: any) {
+      setDbError(err.message || "Erreur de connexion.");
     }
     setLoading(false);
   }, [params.groupId]);
@@ -53,7 +81,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   useEffect(() => {
     loadData();
 
-    // TEMPS RÉEL
     const channel = supabase
       .channel(`group-${params.groupId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'participants', filter: `group_id=eq.${params.groupId}` }, 
@@ -65,19 +92,16 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     return () => { supabase.removeChannel(channel); };
   }, [params.groupId, loadData]);
 
-  // SAUVEGARDER MES PROPRES IDÉES
   const handleSaveMine = async () => {
     setSavingId(me.id);
     const data = parseWishlist(me.wishlist);
     data.mine = { text: myText, url: myUrl };
     await supabase.from('participants').update({ wishlist: JSON.stringify(data) }).eq('id', me.id);
-    
     setMe({ ...me, wishlist: JSON.stringify(data) });
     setSavingId(null);
   };
 
-  // SAUVEGARDER LES IDÉES SOUFFLÉES POUR LES AUTRES
-  const handleSaveOthers = async (id: string, othersText: string, currentRaw: string) => {
+  const handleSaveOthers = async (id: string, othersText: string, currentRaw: any) => {
     setSavingId(id);
     const data = parseWishlist(currentRaw);
     data.others = othersText;
@@ -86,7 +110,10 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 italic font-black uppercase"><Loader2 className="animate-spin text-red-600 mr-2" /> Chargement...</div>;
-  if (!me) return <div className="p-20 text-center font-black uppercase italic text-red-600">Accès Refusé</div>;
+  
+  // NOUVEAU : Si ça plante, ça te dira exactement pourquoi !
+  if (dbError) return <div className="p-20 text-center font-black uppercase italic text-red-600 border-4 border-red-600 m-10">ERREUR : {dbError}</div>;
+  if (!me) return <div className="p-20 text-center font-black uppercase italic text-red-600 border-4 border-red-600 m-10">Accès Refusé (Profil introuvable)</div>;
 
   const myTarget = groupParticipants.find(p => p.id === me.target_id);
   const targetData = myTarget ? parseWishlist(myTarget.wishlist) : { mine: { text: '', url: '' }, others: '' };
@@ -124,12 +151,12 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                 {savingId === myTarget?.id && <Loader2 size={16} className="animate-spin text-red-500" />}
               </div>
               <textarea 
-                key={targetData.others} // Permet la mise à jour en temps réel
+                key={targetData.others}
                 className="w-full bg-transparent border-none text-2xl p-0 focus:ring-0 resize-none placeholder:opacity-20 italic font-black"
                 rows={3}
                 placeholder="Discutez des idées de cadeaux ici..."
                 defaultValue={targetData.others}
-                onBlur={(e) => handleSaveOthers(myTarget.id, e.target.value, myTarget.wishlist)}
+                onBlur={(e) => handleSaveOthers(myTarget?.id, e.target.value, myTarget?.wishlist)}
               />
             </div>
           </div>
@@ -162,7 +189,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                   </div>
 
                   {isMe ? (
-                    /* MON ESPACE : Je modifie mes idées, je ne vois pas celles des autres */
                     <div className="space-y-4">
                       <div className="bg-green-600/50 p-5 rounded-2xl">
                         <textarea 
@@ -184,7 +210,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                       </button>
                     </div>
                   ) : (
-                    /* L'ESPACE DES AUTRES : Je vois leurs idées en vert, j'édite les idées du groupe */
                     <div className="space-y-4">
                       <div className="bg-green-50 border-2 border-green-200 p-4 rounded-2xl">
                         <p className="text-[10px] text-green-600 mb-1">SES PROPRES IDÉES :</p>
