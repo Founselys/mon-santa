@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Gift, LogOut, Users, ArrowLeft, Eye, EyeOff, X, CheckCircle2, Loader2, List, ExternalLink, Link as LinkIcon, ArrowRight, Moon, Sun } from 'lucide-react';
+import { Plus, Trash2, Gift, LogOut, Users, ArrowLeft, Eye, EyeOff, X, CheckCircle2, Loader2, List, ExternalLink, Link as LinkIcon, ArrowRight, Moon, Sun, Banknote } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
 const parseWishlistSafe = (raw: any) => {
@@ -27,16 +27,15 @@ export default function SecretSanta() {
   const [user, setUser] = useState<any>(null);
   const [groupName, setGroupName] = useState('');
   const [eventDate, setEventDate] = useState(''); 
-  const [budget, setBudget] = useState(''); // NOUVEAU : Le budget
+  const [budget, setBudget] = useState(''); 
+  const [editBudget, setEditBudget] = useState(''); // NOUVEAU : Pour la modification
   const [loading, setLoading] = useState(false);
   const [mesGroupes, setMesGroupes] = useState<any[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
   const [myParticipantInfo, setMyParticipantInfo] = useState<any>(null);
   
   const [wishlistText, setWishlistText] = useState('');
-  const [wishlistUrl, setWishlistUrl] = useState('');
   
-  // NOUVEAU : Mode sombre
   const [isDark, setIsDark] = useState(false);
 
   const [participants, setParticipants] = useState([
@@ -47,7 +46,6 @@ export default function SecretSanta() {
   const [revealedTargets, setRevealedTargets] = useState<{ [key: string]: boolean }>({});
 
   useEffect(() => {
-    // Charger le mode sombre depuis la mémoire
     if (localStorage.getItem('theme') === 'dark') setIsDark(true);
 
     const checkUser = async () => {
@@ -90,16 +88,23 @@ export default function SecretSanta() {
     if (!monP) return;
     setLoading(true);
 
+    // 1. Sauvegarde de la petite idée
     const currentData = parseWishlistSafe(monP.wishlist);
     if (currentData.mine.length > 0) {
         currentData.mine[0].text = wishlistText;
-        currentData.mine[0].url = wishlistUrl;
     } else if (wishlistText) {
-        currentData.mine.push({ id: Date.now().toString(), text: wishlistText, url: wishlistUrl });
+        currentData.mine.push({ id: Date.now().toString(), text: wishlistText, url: '' });
     }
+    await supabase.from('participants').update({ wishlist: JSON.stringify(currentData) }).eq('id', monP.id);
     
-    const { error } = await supabase.from('participants').update({ wishlist: JSON.stringify(currentData) }).eq('id', monP.id);
-    if (!error) { alert("Cadeau mis à jour ! 🎁"); fetchMesGroupes(user.id); }
+    // 2. NOUVEAU : Sauvegarde du budget si modifié
+    if (editBudget !== selectedGroup.budget) {
+        await supabase.from('groups').update({ budget: editBudget }).eq('id', selectedGroup.id);
+        setSelectedGroup({...selectedGroup, budget: editBudget});
+    }
+
+    alert("Modifications sauvegardées ! 🎁"); 
+    await fetchMesGroupes(user.id);
     setLoading(false);
   };
 
@@ -141,9 +146,11 @@ export default function SecretSanta() {
     }
 
     try {
-      // NOUVEAU : Enregistrement du budget
-      const { data: group } = await supabase.from('groups').insert([{ name: groupName, organizer_id: user.id, delete_at: eventDate || null, budget: budget }]).select().single();
-      const { data: dbParticipants } = await supabase.from('participants').insert(participants.map(p => ({ group_id: group.id, name: p.name, email: p.email }))).select();
+      const { data: group, error: groupError } = await supabase.from('groups').insert([{ name: groupName, organizer_id: user.id, delete_at: eventDate || null, budget: budget }]).select().single();
+      if (groupError) { alert("Erreur Création Groupe : " + groupError.message); setLoading(false); return; }
+
+      const { data: dbParticipants, error: partError } = await supabase.from('participants').insert(participants.map(p => ({ group_id: group.id, name: p.name, email: p.email }))).select();
+      if (partError) { alert("Erreur Ajout Participants : " + partError.message); setLoading(false); return; }
       
       const emailsToSend = [];
       for (let p of participants) {
@@ -158,7 +165,7 @@ export default function SecretSanta() {
       await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emails: emailsToSend }) });
       await fetchMesGroupes(user.id);
       setStep('success');
-    } catch (e) { alert("Erreur."); }
+    } catch (e: any) { alert("Erreur générale : " + e.message); }
     setLoading(false);
   };
 
@@ -171,7 +178,6 @@ export default function SecretSanta() {
             <Gift fill="currentColor" size={36} className="drop-shadow-md" /> SANTAPP
           </div>
           <div className="flex items-center gap-4">
-            {/* BOUTON MODE SOMBRE */}
             <button onClick={toggleTheme} className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                 {isDark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
@@ -215,16 +221,16 @@ export default function SecretSanta() {
                 {mesGroupes.map((group) => (
                   <div key={group.id} onClick={() => { 
                     setSelectedGroup(group); 
+                    setEditBudget(group.budget || ''); // Prépare le budget à modifier
                     const monP = group.participants?.find((p: any) => p.email === user?.email);
                     setMyParticipantInfo(monP);
                     const data = parseWishlistSafe(monP?.wishlist);
                     setWishlistText(data.mine[0]?.text || ''); 
-                    setWishlistUrl(data.mine[0]?.url || '');
                     setStep('view'); 
                   }} className={`${isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-white border-slate-900 hover:bg-red-50'} p-6 md:p-8 rounded-3xl border-[4px] flex justify-between items-center hover:-translate-y-1 transition-all cursor-pointer shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] group`}>
                     <div>
                         <span className="text-3xl group-hover:text-red-600 transition-colors">{group.name}</span>
-                        {group.budget && <span className="ml-4 bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs align-middle">BUDGET: {group.budget}</span>}
+                        {group.budget && <span className="ml-4 bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs align-middle">BUDGET: {group.budget} €</span>}
                         <p className={`text-xs mt-2 flex items-center gap-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}><Users size={14}/> {group.participants?.length || 0} PARTICIPANTS</p>
                     </div>
                     <button onClick={(e) => supprimerGroupe(group.id, e)} className={`p-4 rounded-2xl border-2 transition-all ${isDark ? 'bg-slate-900 border-slate-600 text-slate-500 hover:text-white hover:bg-red-600' : 'bg-slate-100 border-slate-200 text-slate-400 hover:text-white hover:bg-red-600 hover:border-red-600'}`}><Trash2 size={24} /></button>
@@ -246,10 +252,14 @@ export default function SecretSanta() {
                     <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>NOM DU GROUPE :</label>
                     <input placeholder="Ex: Famille 2024" className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} value={groupName} onChange={(e) => setGroupName(e.target.value)} />
                 </div>
-                {/* NOUVEAU : CHAMP BUDGET */}
                 <div className="space-y-2 md:col-span-1">
                     <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>BUDGET MAX :</label>
-                    <input placeholder="Ex: 50€ (Optionnel)" className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} value={budget} onChange={(e) => setBudget(e.target.value)} />
+                    <input 
+                      placeholder="Ex: 50 (Chiffres)" 
+                      className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} 
+                      value={budget} 
+                      onChange={(e) => setBudget(e.target.value.replace(/[^0-9]/g, ''))} // Filtre Chiffres Uniquement
+                    />
                 </div>
                 <div className="space-y-2 md:col-span-1">
                     <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>DATE (OPTIONNEL) :</label>
@@ -290,7 +300,7 @@ export default function SecretSanta() {
                 <div>
                     <button onClick={() => setStep('home')} className={`mb-4 flex items-center gap-2 text-sm transition-colors px-4 py-2 rounded-xl border-2 ${isDark ? 'text-slate-300 bg-slate-700 border-slate-600 hover:text-red-400' : 'text-slate-500 bg-slate-100 border-slate-200 hover:text-red-600'}`}><ArrowLeft size={18}/> RETOUR</button>
                     <h2 className="text-5xl md:text-7xl leading-none">{selectedGroup.name}</h2>
-                    {selectedGroup.budget && <span className="inline-block mt-4 bg-yellow-400 text-yellow-900 px-4 py-2 rounded-full text-lg shadow-sm">BUDGET : {selectedGroup.budget}</span>}
+                    {selectedGroup.budget && <span className="inline-block mt-4 bg-yellow-400 text-yellow-900 px-4 py-2 rounded-full text-lg shadow-sm">BUDGET MAX : {selectedGroup.budget} €</span>}
                 </div>
                 
                 {myParticipantInfo && (
@@ -301,15 +311,22 @@ export default function SecretSanta() {
             </div>
             
             <div className="mb-12 p-8 bg-slate-900 border-4 border-slate-900 rounded-[2.5rem] text-white shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] transform -rotate-1">
-              <h3 className="flex items-center gap-2 text-sm text-red-400 mb-6 font-black"><List size={18}/> MA WISHLIST RAPIDE (PREMIÈRE IDÉE)</h3>
+              <h3 className="flex items-center gap-2 text-sm text-red-400 mb-6 font-black"><List size={18}/> WISHLIST RAPIDE & PARAMÈTRES</h3>
               <div className="space-y-4">
-                <textarea className="w-full bg-slate-800 border-2 border-slate-700 rounded-2xl p-5 text-xl text-white font-black italic outline-none focus:border-red-500 placeholder:text-slate-500" rows={2} placeholder="IDÉE DE CADEAU" value={wishlistText} onChange={(e) => setWishlistText(e.target.value)} />
+                <textarea className="w-full bg-slate-800 border-2 border-slate-700 rounded-2xl p-5 text-xl text-white font-black italic outline-none focus:border-red-500 placeholder:text-slate-500" rows={2} placeholder="IDÉE DE CADEAU RAPIDE" value={wishlistText} onChange={(e) => setWishlistText(e.target.value)} />
+                
+                {/* NOUVEAU : Champ pour modifier le budget depuis l'accueil */}
                 <div className="relative">
-                  <LinkIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
-                  <input className="w-full bg-slate-800 border-2 border-slate-700 rounded-2xl p-5 pl-14 text-lg text-blue-400 font-black italic outline-none focus:border-red-500 placeholder:text-slate-500" placeholder="LIEN VERS LE CADEAU (URL)" value={wishlistUrl} onChange={(e) => setWishlistUrl(e.target.value)} />
+                  <Banknote className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
+                  <input 
+                    className="w-full bg-slate-800 border-2 border-slate-700 rounded-2xl p-5 pl-14 text-lg text-yellow-400 font-black italic outline-none focus:border-red-500 placeholder:text-slate-500" 
+                    placeholder="MODIFIER LE BUDGET MAX (€)" 
+                    value={editBudget} 
+                    onChange={(e) => setEditBudget(e.target.value.replace(/[^0-9]/g, ''))} // Filtre Chiffres Uniquement
+                  />
                 </div>
               </div>
-              <button onClick={updateWishlist} className="mt-6 w-full py-4 bg-red-600 hover:bg-red-500 text-white text-xl border-4 border-slate-900 rounded-2xl transition-all shadow-[4px_4px_0px_0px_#000000]">SAUVEGARDER MA LISTE</button>
+              <button onClick={updateWishlist} className="mt-6 w-full py-4 bg-red-600 hover:bg-red-500 text-white text-xl border-4 border-slate-900 rounded-2xl transition-all shadow-[4px_4px_0px_0px_#000000]">SAUVEGARDER MES INFOS</button>
             </div>
 
             <div className="space-y-6">
