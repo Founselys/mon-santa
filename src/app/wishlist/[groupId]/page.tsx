@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useCallback } from 'react';
-import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, Lock, Plus, Trash2, Moon, Sun, BellRing } from 'lucide-react';
+import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, Lock, Plus, Trash2, Moon, Sun, BellRing, MessageSquare, Send } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
 const formatUrl = (url: string) => {
@@ -10,18 +10,22 @@ const formatUrl = (url: string) => {
   return trimmed;
 };
 
+// NOUVEAU : Le parser de Wishlist intègre désormais un tableau "chat"
 const parseWishlist = (raw: any) => {
-  const defaultData = { mine: [], others: [] };
+  const defaultData = { mine: [], others: [], chat: [] };
   if (!raw) return defaultData;
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     let mine = Array.isArray(parsed?.mine) ? [...parsed.mine] : [];
     let others = Array.isArray(parsed?.others) ? [...parsed.others] : [];
+    let chat = Array.isArray(parsed?.chat) ? [...parsed.chat] : []; // NOUVEAU
+    
     if (parsed?.mine && !Array.isArray(parsed.mine) && parsed.mine.text) mine.push({ id: Date.now().toString(), text: parsed.mine.text, url: parsed.mine.url });
     if (typeof parsed?.others === 'string' && parsed.others.trim() !== '') others.push({ id: Date.now().toString() + 'o', text: parsed.others, authorName: 'Le groupe' });
-    return { mine, others };
+    
+    return { mine, others, chat };
   } catch {
-    if (typeof raw === 'string' && raw.trim() !== '') return { mine: [{ id: Date.now().toString(), text: raw, url: '' }], others: [] };
+    if (typeof raw === 'string' && raw.trim() !== '') return { mine: [{ id: Date.now().toString(), text: raw, url: '' }], others: [], chat: [] };
     return defaultData;
   }
 };
@@ -32,7 +36,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
-  const [groupBudget, setGroupBudget] = useState(""); // NOUVEAU : Récupération du budget
+  const [groupBudget, setGroupBudget] = useState("");
   const [dbError, setDbError] = useState("");
 
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -42,7 +46,9 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [newOtherText, setNewOtherText] = useState("");
   const [newOtherUrl, setNewOtherUrl] = useState("");
   
-  // NOUVEAU : États pour l'aide et le mode sombre
+  // NOUVEAU : Chat
+  const [newChatMessage, setNewChatMessage] = useState("");
+
   const [isDark, setIsDark] = useState(false);
   const [isNudging, setIsNudging] = useState(false);
 
@@ -60,7 +66,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
       if (myData) {
         setMe(myData);
         setGroupName(myData.groups?.name || "Mon Groupe");
-        setGroupBudget(myData.groups?.budget || ""); // Stockage du budget
+        setGroupBudget(myData.groups?.budget || ""); 
         setSelectedUserId(myData.target_id);
 
         const { data: groupData } = await supabase.from('participants').select('*').eq('group_id', myData.group_id).order('name', { ascending: true });
@@ -128,7 +134,20 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     saveToDb(targetId, currentData);
   };
 
-  // NOUVEAU : Fonction pour envoyer le mail d'aide
+  // NOUVEAU : Fonction pour envoyer un message dans le chat
+  const sendChatMessage = (targetId: string, currentWishlist: any, isSanta: boolean) => {
+    if (!newChatMessage.trim()) return;
+    const currentData = parseWishlist(currentWishlist);
+    currentData.chat.push({
+      id: Date.now().toString(),
+      text: newChatMessage,
+      sender: isSanta ? 'santa' : 'target',
+      date: new Date().toISOString()
+    });
+    saveToDb(targetId, currentData);
+    setNewChatMessage("");
+  };
+
   const sendNudgeEmail = async (targetUser: any) => {
     setIsNudging(true);
     try {
@@ -149,12 +168,12 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
 
   const selectedUser = groupParticipants.find(p => p.id === selectedUserId) || me;
   const isLookingAtMyself = selectedUser.id === me.id;
+  const isMyTarget = selectedUser.id === me.target_id;
   const selectedData = parseWishlist(selectedUser.wishlist);
 
   return (
     <div className={`min-h-screen p-4 md:p-8 font-black italic uppercase tracking-tighter transition-colors duration-300 ${isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
       
-      {/* BOUTON THEME EN HAUT A DROITE */}
       <div className="absolute top-4 right-4 md:top-8 md:right-8 z-50">
         <button onClick={toggleTheme} className={`p-3 rounded-xl border-4 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] ${isDark ? 'bg-slate-800 text-white border-slate-700 hover:bg-slate-700' : 'bg-white text-slate-900 border-slate-900 hover:bg-slate-100'}`}>
             {isDark ? <Sun size={24} /> : <Moon size={24} />}
@@ -166,9 +185,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
         <div className={`flex flex-col md:flex-row justify-between items-center gap-4 border-b-4 pb-6 ${isDark ? 'border-slate-700' : 'border-slate-900'}`}>
           <div>
             <div className="bg-red-600 text-white px-4 py-1 rounded-full text-sm inline-block mb-2 shadow-sm">{groupName} 🎄</div>
-            {/* AFFICHAGE DU BUDGET */}
             {groupBudget && <div className="ml-3 bg-yellow-400 text-yellow-900 px-4 py-1 rounded-full text-sm inline-block mb-2 shadow-sm">BUDGET : {groupBudget}</div>}
-            
             <h1 className="text-3xl md:text-5xl leading-none">ESPACE DE <span className="text-red-500 underline decoration-4 underline-offset-4">{me.name}</span></h1>
           </div>
           <p className={`text-xs max-w-xs text-right hidden md:block ${isDark ? 'text-slate-400' : 'opacity-50'}`}>CLIQUE SUR UN PARTICIPANT POUR VOIR SA LISTE OU LUI SOUFFLER DES IDÉES.</p>
@@ -181,7 +198,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
             <div className="flex flex-col gap-3">
               {groupParticipants.map((p) => {
                 const isSelected = p.id === selectedUserId;
-                const isMyTarget = p.id === me.target_id;
+                const targetMatch = p.id === me.target_id;
                 const isMe = p.id === me.id;
 
                 return (
@@ -195,7 +212,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                       <span className="text-2xl">{p.name}</span>
                       {isMe && <span className={`ml-2 text-[10px] px-2 py-0.5 rounded-full border-2 ${isSelected ? 'border-white text-white' : (isDark ? 'border-slate-400 text-slate-400' : 'border-slate-900 text-slate-900')}`}>MOI</span>}
                     </div>
-                    {isMyTarget && <Gift className={isSelected ? "text-white" : "text-red-500"} size={28} />}
+                    {targetMatch && <Gift className={isSelected ? "text-white" : "text-red-500"} size={28} />}
                   </div>
                 );
               })}
@@ -205,7 +222,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
           <div className="w-full md:w-2/3">
             <div className={`border-4 rounded-[3rem] p-6 md:p-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] relative overflow-hidden ${isDark ? 'bg-slate-900 border-slate-700 shadow-[12px_12px_0px_0px_#0f172a]' : 'bg-white border-slate-900 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]'}`}>
               
-              {selectedUser.id === me.target_id && (
+              {isMyTarget && (
                 <div className="absolute top-0 right-0 bg-red-600 text-white px-8 py-2 -rotate-2 origin-top-right text-xs shadow-md">
                   C'EST TA PIOCHE !
                 </div>
@@ -227,8 +244,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                         <div>
                             <p className={`opacity-40 text-lg ${isDark ? 'text-green-500' : 'text-green-800'}`}>Aucune idée pour l'instant...</p>
                             
-                            {/* NOUVEAU : BOUTON J'AI BESOIN D'AIDE */}
-                            {!isLookingAtMyself && selectedUser.id === me.target_id && (
+                            {!isLookingAtMyself && isMyTarget && (
                                 <button onClick={() => sendNudgeEmail(selectedUser)} disabled={isNudging} className="mt-4 bg-orange-500 text-white px-4 py-3 rounded-xl hover:bg-orange-600 transition-colors flex items-center gap-2 border-2 border-orange-700 shadow-[4px_4px_0px_0px_#9a3412]">
                                     {isNudging ? <Loader2 className="animate-spin" size={20} /> : <><BellRing size={20} /> J'AI BESOIN D'AIDE</>}
                                 </button>
@@ -279,7 +295,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
 
                 {/* ZONE 2 : BULLES NOIRES */}
                 <div className={`border-4 rounded-3xl p-6 relative transform rotate-1 ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-slate-900 text-white border-slate-900'}`}>
-                  
                   {isLookingAtMyself ? (
                     <div className="text-center py-8 opacity-80 space-y-4">
                       <Lock className="mx-auto text-red-500 mb-2" size={40} />
@@ -332,10 +347,61 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                           </button>
                         </div>
                       </div>
-                      
                     </div>
                   )}
                 </div>
+
+                {/* ZONE 3 NOUVELLE : CHAT ANONYME (Uniquement entre Moi et Ma Pioche) */}
+                {(isLookingAtMyself || isMyTarget) && (
+                    <div className={`border-4 rounded-3xl p-6 relative transform -rotate-1 ${isDark ? 'bg-blue-950/40 border-blue-800 text-blue-100' : 'bg-blue-50 border-blue-600 text-blue-900'}`}>
+                        <div className="flex justify-between items-center mb-6">
+                            <p className={`text-sm flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                                <MessageSquare size={20} /> 
+                                {isLookingAtMyself ? "MESSAGES DE TON PÈRE NOËL SECRET" : "CHAT ANONYME AVEC TA PIOCHE"}
+                            </p>
+                        </div>
+
+                        <div className="space-y-4 mb-6">
+                            {selectedData.chat.length === 0 && (
+                                <p className="opacity-50 text-center py-4">Aucun message pour le moment...</p>
+                            )}
+                            {selectedData.chat.map((msg: any) => {
+                                // "santa" = message du Père Noël (Moi si isMyTarget, ou l'Inconnu si isLookingAtMyself)
+                                // "target" = message de la Pioche (Moi si isLookingAtMyself, ou ma Cible si isMyTarget)
+                                const isMessageFromMe = (isLookingAtMyself && msg.sender === 'target') || (isMyTarget && msg.sender === 'santa');
+                                
+                                return (
+                                    <div key={msg.id} className={`flex ${isMessageFromMe ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-[80%] p-4 rounded-2xl border-2 ${
+                                            isMessageFromMe 
+                                            ? (isDark ? 'bg-blue-600 border-blue-500 text-white shadow-[4px_4px_0px_0px_#1e3a8a]' : 'bg-blue-500 border-blue-700 text-white shadow-[4px_4px_0px_0px_#1e3a8a]') 
+                                            : (isDark ? 'bg-slate-800 border-slate-600 text-slate-200 shadow-[4px_4px_0px_0px_#0f172a]' : 'bg-white border-blue-300 text-blue-900 shadow-[4px_4px_0px_0px_#bfdbfe]')
+                                        }`}>
+                                            <p className="text-xs mb-1 opacity-70 flex items-center gap-1">
+                                                {msg.sender === 'santa' ? '🎅 PÈRE NOËL SECRET' : `👤 ${selectedUser.name}`}
+                                            </p>
+                                            <p className="text-lg leading-tight">{msg.text}</p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <div className={`p-2 rounded-2xl border-2 flex items-center gap-2 ${isDark ? 'bg-slate-800 border-blue-800' : 'bg-white border-blue-200'}`}>
+                            <input 
+                                className={`flex-1 bg-transparent border-none px-3 py-2 focus:ring-0 text-sm font-black italic ${isDark ? 'text-white placeholder:text-blue-700' : 'text-blue-900 placeholder:text-blue-300'}`}
+                                placeholder="Écrire un message..." 
+                                value={newChatMessage} 
+                                onChange={(e) => setNewChatMessage(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && sendChatMessage(selectedUser.id, selectedUser.wishlist, isMyTarget)}
+                            />
+                            <button onClick={() => sendChatMessage(selectedUser.id, selectedUser.wishlist, isMyTarget)} disabled={savingId === selectedUser.id} className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-500 transition-colors">
+                                {savingId === selectedUser.id ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
+                            </button>
+                        </div>
+                        {isMyTarget && <p className="text-[10px] text-center mt-3 opacity-60">Ton identité restera cachée, elle ne verra que "Père Noël Secret".</p>}
+                    </div>
+                )}
 
               </div>
             </div>

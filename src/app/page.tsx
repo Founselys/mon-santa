@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Gift, LogOut, Users, ArrowLeft, Eye, EyeOff, X, CheckCircle2, Loader2, List, ExternalLink, ArrowRight, Moon, Sun, Banknote, Copy, Edit3 } from 'lucide-react';
+import { Plus, Trash2, Gift, LogOut, Users, ArrowLeft, Eye, EyeOff, X, CheckCircle2, Loader2, List, ExternalLink, ArrowRight, Moon, Sun, Banknote, Copy, Edit3, MessageSquare } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
 export default function SecretSanta() {
@@ -15,6 +15,7 @@ export default function SecretSanta() {
   
   const [loading, setLoading] = useState(false);
   const [mesGroupes, setMesGroupes] = useState<any[]>([]);
+  const [mesParticipations, setMesParticipations] = useState<any[]>([]); // NOUVEAU : Participations
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
   const [myParticipantInfo, setMyParticipantInfo] = useState<any>(null);
   
@@ -33,7 +34,10 @@ export default function SecretSanta() {
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
-      if (user) fetchMesGroupes(user.id);
+      if (user) {
+          fetchMesGroupes(user.id);
+          fetchMesParticipations(user.email); // NOUVEAU
+      }
     };
     checkUser();
   }, []);
@@ -53,7 +57,17 @@ export default function SecretSanta() {
     if (!error && data) setMesGroupes(data);
   };
 
-  // NOUVEAU : Redirection propre vers la page de login
+  // NOUVEAU : Récupère les groupes où je suis participant
+  const fetchMesParticipations = async (email: string | undefined) => {
+    if (!email) return;
+    const { data, error } = await supabase
+      .from('participants')
+      .select('*, groups(*)')
+      .eq('email', email)
+      .order('created_at', { ascending: false });
+    if (!error && data) setMesParticipations(data);
+  };
+
   const handleLogin = () => {
     window.location.href = '/login';
   };
@@ -136,6 +150,7 @@ export default function SecretSanta() {
 
       await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emails: emailsToSend }) });
       await fetchMesGroupes(user.id);
+      if (user.email) await fetchMesParticipations(user.email);
       setStep('success');
     } catch (e: any) { alert("Erreur générale : " + e.message); }
     setLoading(false);
@@ -163,9 +178,15 @@ export default function SecretSanta() {
                 {isDark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             
-            {/* NOUVEAU : BOUTON SE CONNECTER SI PAS D'UTILISATEUR */}
             {user ? (
-              <button onClick={() => { supabase.auth.signOut(); setUser(null); setStep('home'); }} 
+              <button onClick={async () => { 
+                  await supabase.auth.signOut(); 
+                  setUser(null); 
+                  setMesGroupes([]); 
+                  setMesParticipations([]); // 🧹 On vide aussi les participations
+                  setSelectedGroup(null); 
+                  setStep('home'); 
+              }} 
               className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center gap-2 text-xs">
                 <LogOut size={18} /> <span className="hidden md:block">DÉCONNEXION</span>
               </button>
@@ -190,19 +211,45 @@ export default function SecretSanta() {
               </div>
               
               <div className={`p-10 rounded-[3rem] border-[6px] border-slate-900 shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] flex flex-col justify-center ${isDark ? 'bg-slate-900 text-white' : 'bg-slate-900 text-white'}`}>
-                <p className="text-8xl text-red-500 leading-none">{mesGroupes.length}</p>
-                <p className="opacity-80 text-xl mt-2 flex items-center gap-2"><List size={24}/> GROUPES ACTIFS</p>
+                <p className="text-8xl text-red-500 leading-none">{mesParticipations.length + mesGroupes.length}</p>
+                <p className="opacity-80 text-xl mt-2 flex items-center gap-2"><List size={24}/> SESSIONS TOTALES</p>
               </div>
             </div>
 
-            <div className="space-y-6">
+            {/* NOUVEAU : TABLEAU DE BORD PARTICIPANT */}
+            {mesParticipations.length > 0 && (
+              <div className="space-y-6">
+                <div className="flex items-center gap-4">
+                  <div className={`h-[4px] flex-1 ${isDark ? 'bg-blue-900' : 'bg-blue-200'}`}></div>
+                  <h3 className="text-3xl text-blue-500 flex items-center gap-2"><Gift size={28}/> MES PARTICIPATIONS</h3>
+                  <div className={`h-[4px] flex-1 ${isDark ? 'bg-blue-900' : 'bg-blue-200'}`}></div>
+                </div>
+
+                <div className="grid gap-4">
+                  {mesParticipations.map((part) => (
+                    <a key={part.id} href={`/wishlist/${part.group_id}?p=${part.id}`} className={`block p-6 md:p-8 rounded-3xl border-[4px] flex justify-between items-center hover:-translate-y-1 transition-all shadow-[6px_6px_0px_0px_rgba(59,130,246,1)] hover:shadow-[8px_8px_0px_0px_rgba(59,130,246,1)] group ${isDark ? 'bg-slate-800 border-blue-900 hover:bg-slate-700' : 'bg-blue-50 border-blue-900 hover:bg-blue-100'}`}>
+                      <div>
+                          <span className="text-3xl text-blue-600 group-hover:text-blue-500 transition-colors">{part.groups?.name || "Groupe Inconnu"}</span>
+                          <p className={`text-xs mt-2 flex items-center gap-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}><Users size={14}/> MON ESPACE SECRET</p>
+                      </div>
+                      <div className={`p-4 rounded-2xl border-2 transition-all ${isDark ? 'bg-slate-900 border-slate-600 text-blue-400' : 'bg-white border-blue-200 text-blue-500'}`}>
+                          <ArrowRight size={24} />
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* SESSIONS ORGANISATEUR */}
+            <div className="space-y-6 pt-8">
               <div className="flex items-center gap-4">
                 <div className={`h-[4px] flex-1 ${isDark ? 'bg-slate-700' : 'bg-slate-900'}`}></div>
-                <h3 className="text-3xl">TES SESSIONS</h3>
+                <h3 className="text-3xl">TES SESSIONS (ORGANISATEUR)</h3>
                 <div className={`h-[4px] flex-1 ${isDark ? 'bg-slate-700' : 'bg-slate-900'}`}></div>
               </div>
 
-              {mesGroupes.length === 0 && <p className="text-center text-slate-400 py-10">AUCUN GROUPE POUR L'INSTANT...</p>}
+              {mesGroupes.length === 0 && <p className="text-center text-slate-400 py-10">AUCUN GROUPE ORGANISÉ POUR L'INSTANT...</p>}
               
               <div className="grid gap-4">
                 {mesGroupes.map((group) => (
