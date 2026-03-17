@@ -54,15 +54,8 @@ export default function SecretSanta() {
     if (!error && data) setMesGroupes(data);
   };
 
-  const handleLogin = async () => {
-    const email = window.prompt("Entre ton email pour recevoir ton lien de connexion :");
-    if (!email) return;
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email,
-      options: { emailRedirectTo: window.location.origin }
-    });
-    if (error) alert("Erreur : " + error.message);
-    else alert("Lien envoyé ! Vérifie tes spams.");
+  const handleLogin = () => {
+    window.location.href = '/login';
   };
 
   // NOUVEAU : Fonction unique pour mettre à jour les paramètres du groupe
