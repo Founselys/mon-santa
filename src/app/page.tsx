@@ -36,13 +36,23 @@ export default function SecretSanta() {
     if (!error && data) setMesGroupes(data);
   };
 
+  // NOUVELLE FONCTION : Connexion via Magic Link
   const handleLogin = async () => {
-    const email = window.prompt("Email :");
+    const email = window.prompt("Entre ton email pour recevoir un lien de connexion :");
     if (!email) return;
-    const password = window.prompt("Mot de passe :");
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password: password || '' });
-    if (error) alert("Erreur de connexion");
-    if (data?.user) { setUser(data.user); fetchMesGroupes(data.user.id); }
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email,
+      options: {
+        emailRedirectTo: window.location.origin, 
+      }
+    });
+
+    if (error) {
+      alert("Erreur : " + error.message);
+    } else {
+      alert("Un lien de connexion a été envoyé sur ton email ! 📧 Vérifie tes spams.");
+    }
   };
 
   const supprimerGroupe = async (id: string, e: React.MouseEvent) => {
@@ -59,7 +69,6 @@ export default function SecretSanta() {
   };
 
   const lancerLeTirage = async () => {
-    // MODIFICATION : La date n'est plus obligatoire ici
     if (!user || !groupName.trim()) {
       alert("Veuillez remplir le nom du groupe.");
       return;
@@ -85,7 +94,6 @@ export default function SecretSanta() {
     }
 
     try {
-      // On envoie la date si elle existe, sinon null
       const { data: group } = await supabase.from('groups').insert([{ 
         name: groupName, 
         organizer_id: user.id,
@@ -166,7 +174,6 @@ export default function SecretSanta() {
                       <h4 className="font-black text-lg text-slate-800 uppercase tracking-tight">{group.name}</h4>
                       <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest flex items-center gap-2 mt-1">
                         <Calendar size={12}/> 
-                        {/* MODIFICATION : Affichage si pas de date */}
                         {group.delete_at ? `Fin le ${new Date(group.delete_at).toLocaleDateString()}` : "Date non définie"}
                       </p>
                     </div>
@@ -213,7 +220,6 @@ export default function SecretSanta() {
               </div>
               <button onClick={() => setParticipants([...participants, {id: Date.now(), name: '', email: ''}])} className="text-red-600 font-black text-xs uppercase tracking-widest hover:bg-red-50 px-6 py-3 rounded-xl transition-colors">+ Ajouter un ami</button>
               
-              {/* MODIFICATION : Bouton activé même sans date */}
               <button onClick={lancerLeTirage} disabled={loading || !groupName} className="w-full py-5 rounded-2xl font-black text-xl bg-red-600 text-white shadow-xl shadow-red-200 hover:bg-red-700 disabled:bg-slate-100 transition-all">
                 {loading ? <Loader2 className="animate-spin mx-auto text-white" /> : "LANCER LE SECRET SANTA"}
               </button>
