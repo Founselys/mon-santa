@@ -10,7 +10,6 @@ const formatUrl = (url: string) => {
   return trimmed;
 };
 
-// MODIFICATION : Le parser gère maintenant un objet "reactions" pour chaque idée dans "others"
 const parseWishlist = (raw: any) => {
   const defaultData = { mine: [], others: [], chat: [] };
   if (!raw) return defaultData;
@@ -133,14 +132,24 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     saveToDb(targetId, currentData);
   };
 
-  // NOUVEAU : Fonction pour ajouter une réaction sur l'idée du rectangle noir
-  const addReaction = (targetId: string, ideaId: string, currentWishlist: any, emoji: string) => {
+  // MODIFICATION : On enregistre l'ID de l'utilisateur pour empêcher le spam
+  const toggleReaction = (targetId: string, ideaId: string, currentWishlist: any, emoji: string) => {
     const currentData = parseWishlist(currentWishlist);
     const ideaIndex = currentData.others.findIndex((idea: any) => idea.id === ideaId);
+    
     if (ideaIndex !== -1) {
         if (!currentData.others[ideaIndex].reactions) currentData.others[ideaIndex].reactions = {};
-        const currentCount = currentData.others[ideaIndex].reactions[emoji] || 0;
-        currentData.others[ideaIndex].reactions[emoji] = currentCount + 1;
+        
+        const currentReactions = currentData.others[ideaIndex].reactions;
+        
+        // Si l'utilisateur avait déjà cliqué sur CE bouton, on l'enlève (Toggle Off)
+        if (currentReactions[me.id] === emoji) {
+            delete currentReactions[me.id];
+        } else {
+            // Sinon, on remplace son ancienne réaction par la nouvelle (Un seul vote par personne)
+            currentReactions[me.id] = emoji;
+        }
+        
         saveToDb(targetId, currentData);
     }
   };
@@ -324,7 +333,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                          {selectedData.others.map((idea: any) => (
                           <div key={idea.id} className={`border-2 p-4 rounded-2xl flex flex-col gap-2 group ${isDark ? 'bg-slate-700 border-slate-600 shadow-[4px_4px_0px_0px_#000000]' : 'bg-slate-800 border-slate-700 shadow-[4px_4px_0px_0px_#000000]'}`}>
                             
-                            {/* HAUT DE LA BULLE NOIRE (Texte + Corbeille) */}
                             <div className="flex justify-between items-start gap-4">
                                 <div>
                                 <p className="text-xl leading-tight text-slate-100">{idea.text}</p>
@@ -338,15 +346,34 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                                 <button onClick={() => deleteOtherIdea(selectedUser.id, idea.id, selectedUser.wishlist)} className={`transition-colors p-1 opacity-0 group-hover:opacity-100 ${isDark ? 'text-slate-400 hover:text-red-400' : 'text-slate-600 hover:text-red-500'}`}><Trash2 size={18} /></button>
                             </div>
 
-                            {/* NOUVEAU : LA BARRE DE RÉACTIONS */}
+                            {/* BARRE DE RÉACTIONS MISE À JOUR (Système de vote unique) */}
                             <div className={`flex flex-wrap gap-2 mt-2 pt-3 border-t ${isDark ? 'border-slate-600' : 'border-slate-700'}`}>
                                 {['👍', '👎', '😂', '💸'].map(emoji => {
-                                    const count = idea.reactions?.[emoji] || 0;
+                                    // On recalcule le compte et on vérifie si l'utilisateur actuel a cliqué
+                                    let count = 0;
+                                    let hasReacted = false;
+                                    
+                                    if (idea.reactions) {
+                                        Object.entries(idea.reactions).forEach(([userId, selectedEmoji]) => {
+                                            if (selectedEmoji === emoji) count++;
+                                            if (userId === me.id && selectedEmoji === emoji) hasReacted = true;
+                                            // Rétrocompatibilité (au cas où il reste d'anciennes réactions sous forme de chiffres)
+                                            if (userId === emoji && typeof selectedEmoji === 'number') count += selectedEmoji;
+                                        });
+                                    }
+
                                     return (
                                         <button
                                             key={emoji}
-                                            onClick={() => addReaction(selectedUser.id, idea.id, selectedUser.wishlist, emoji)}
-                                            className={`text-xs px-2 py-1 rounded-lg border transition-all flex items-center gap-1.5 ${count > 0 ? (isDark ? 'bg-slate-600 border-slate-500 text-white' : 'bg-slate-700 border-slate-500 text-white') : (isDark ? 'bg-transparent border-slate-600 text-slate-400 hover:text-white hover:border-slate-500' : 'bg-transparent border-slate-700 text-slate-400 hover:text-white hover:border-slate-600')}`}
+                                            onClick={() => toggleReaction(selectedUser.id, idea.id, selectedUser.wishlist, emoji)}
+                                            className={`text-xs px-2 py-1 rounded-lg border transition-all flex items-center gap-1.5 
+                                                ${hasReacted 
+                                                    ? (isDark ? 'bg-blue-600 border-blue-500 text-white' : 'bg-blue-500 border-blue-600 text-white') 
+                                                    : (count > 0 
+                                                        ? (isDark ? 'bg-slate-600 border-slate-500 text-white' : 'bg-slate-700 border-slate-500 text-white') 
+                                                        : (isDark ? 'bg-transparent border-slate-600 text-slate-400 hover:text-white hover:border-slate-500' : 'bg-transparent border-slate-700 text-slate-400 hover:text-white hover:border-slate-600')
+                                                    )
+                                                }`}
                                         >
                                             <span className="text-sm">{emoji}</span> 
                                             {count > 0 && <span>{count}</span>}
