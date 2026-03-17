@@ -1,26 +1,7 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Gift, LogOut, Users, ArrowLeft, Eye, EyeOff, X, CheckCircle2, Loader2, List, ExternalLink, Link as LinkIcon, ArrowRight, Moon, Sun, Banknote } from 'lucide-react';
+import { Plus, Trash2, Gift, LogOut, Users, ArrowLeft, Eye, EyeOff, X, CheckCircle2, Loader2, List, ExternalLink, ArrowRight, Moon, Sun, Banknote, Copy, Edit3 } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
-
-const parseWishlistSafe = (raw: any) => {
-  const defaultData = { mine: [], others: [] };
-  if (!raw) return defaultData;
-  try {
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    let mine = Array.isArray(parsed?.mine) ? [...parsed.mine] : [];
-    let others = Array.isArray(parsed?.others) ? [...parsed.others] : [];
-    if (parsed?.mine && !Array.isArray(parsed.mine) && parsed.mine.text) {
-      mine.push({ id: Date.now().toString(), text: parsed.mine.text, url: parsed.mine.url });
-    }
-    return { mine, others };
-  } catch {
-    if (typeof raw === 'string' && raw.trim() !== '') {
-        return { mine: [{ id: Date.now().toString(), text: raw, url: '' }], others: [] };
-    }
-    return defaultData;
-  }
-};
 
 export default function SecretSanta() {
   const [step, setStep] = useState('home'); 
@@ -28,13 +9,15 @@ export default function SecretSanta() {
   const [groupName, setGroupName] = useState('');
   const [eventDate, setEventDate] = useState(''); 
   const [budget, setBudget] = useState(''); 
-  const [editBudget, setEditBudget] = useState(''); // NOUVEAU : Pour la modification
+  
+  // États pour la modification depuis la vue organisateur
+  const [editBudget, setEditBudget] = useState(''); 
+  const [editGroupName, setEditGroupName] = useState('');
+  
   const [loading, setLoading] = useState(false);
   const [mesGroupes, setMesGroupes] = useState<any[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
   const [myParticipantInfo, setMyParticipantInfo] = useState<any>(null);
-  
-  const [wishlistText, setWishlistText] = useState('');
   
   const [isDark, setIsDark] = useState(false);
 
@@ -82,29 +65,26 @@ export default function SecretSanta() {
     else alert("Lien envoyé ! Vérifie tes spams.");
   };
 
-  const updateWishlist = async () => {
-    if (!user || !selectedGroup) return;
-    const monP = selectedGroup.participants.find((p: any) => p.email === user.email);
-    if (!monP) return;
+  // NOUVEAU : Fonction unique pour mettre à jour les paramètres du groupe
+  const updateGroupSettings = async () => {
+    if (!selectedGroup) return;
+    if (editGroupName.trim() === '') return alert("Le nom du groupe ne peut pas être vide.");
+    
     setLoading(true);
 
-    // 1. Sauvegarde de la petite idée
-    const currentData = parseWishlistSafe(monP.wishlist);
-    if (currentData.mine.length > 0) {
-        currentData.mine[0].text = wishlistText;
-    } else if (wishlistText) {
-        currentData.mine.push({ id: Date.now().toString(), text: wishlistText, url: '' });
-    }
-    await supabase.from('participants').update({ wishlist: JSON.stringify(currentData) }).eq('id', monP.id);
-    
-    // 2. NOUVEAU : Sauvegarde du budget si modifié
-    if (editBudget !== selectedGroup.budget) {
-        await supabase.from('groups').update({ budget: editBudget }).eq('id', selectedGroup.id);
-        setSelectedGroup({...selectedGroup, budget: editBudget});
+    const { error } = await supabase
+        .from('groups')
+        .update({ name: editGroupName, budget: editBudget })
+        .eq('id', selectedGroup.id);
+        
+    if (error) {
+        alert("Erreur lors de la sauvegarde : " + error.message);
+    } else {
+        alert("Paramètres sauvegardés ! ⚙️"); 
+        setSelectedGroup({...selectedGroup, name: editGroupName, budget: editBudget});
+        await fetchMesGroupes(user.id);
     }
 
-    alert("Modifications sauvegardées ! 🎁"); 
-    await fetchMesGroupes(user.id);
     setLoading(false);
   };
 
@@ -169,6 +149,16 @@ export default function SecretSanta() {
     setLoading(false);
   };
 
+  // NOUVEAU : Fonction pour copier le lien magique
+  const copyMagicLink = (participantId: string, participantName: string) => {
+    const link = `${window.location.origin}/wishlist/${selectedGroup.id}?p=${participantId}`;
+    navigator.clipboard.writeText(link).then(() => {
+        alert(`Lien magique copié pour ${participantName} ! Tu peux le coller dans un message.`);
+    }).catch(err => {
+        alert("Erreur lors de la copie du lien : " + err);
+    });
+  };
+
   return (
     <div className={`min-h-screen font-sans text-left italic font-black uppercase tracking-tighter transition-colors duration-300 ${isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
       
@@ -221,11 +211,10 @@ export default function SecretSanta() {
                 {mesGroupes.map((group) => (
                   <div key={group.id} onClick={() => { 
                     setSelectedGroup(group); 
-                    setEditBudget(group.budget || ''); // Prépare le budget à modifier
+                    setEditBudget(group.budget || ''); 
+                    setEditGroupName(group.name || ''); 
                     const monP = group.participants?.find((p: any) => p.email === user?.email);
                     setMyParticipantInfo(monP);
-                    const data = parseWishlistSafe(monP?.wishlist);
-                    setWishlistText(data.mine[0]?.text || ''); 
                     setStep('view'); 
                   }} className={`${isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-white border-slate-900 hover:bg-red-50'} p-6 md:p-8 rounded-3xl border-[4px] flex justify-between items-center hover:-translate-y-1 transition-all cursor-pointer shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] group`}>
                     <div>
@@ -258,7 +247,7 @@ export default function SecretSanta() {
                       placeholder="Ex: 50 (Chiffres)" 
                       className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} 
                       value={budget} 
-                      onChange={(e) => setBudget(e.target.value.replace(/[^0-9]/g, ''))} // Filtre Chiffres Uniquement
+                      onChange={(e) => setBudget(e.target.value.replace(/[^0-9]/g, ''))} 
                     />
                 </div>
                 <div className="space-y-2 md:col-span-1">
@@ -310,23 +299,33 @@ export default function SecretSanta() {
                 )}
             </div>
             
+            {/* PARAMÈTRES DU GROUPE (Remplace l'ancienne idée rapide) */}
             <div className="mb-12 p-8 bg-slate-900 border-4 border-slate-900 rounded-[2.5rem] text-white shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] transform -rotate-1">
-              <h3 className="flex items-center gap-2 text-sm text-red-400 mb-6 font-black"><List size={18}/> WISHLIST RAPIDE & PARAMÈTRES</h3>
+              <h3 className="flex items-center gap-2 text-sm text-red-400 mb-6 font-black"><List size={18}/> PARAMÈTRES DU GROUPE</h3>
               <div className="space-y-4">
-                <textarea className="w-full bg-slate-800 border-2 border-slate-700 rounded-2xl p-5 text-xl text-white font-black italic outline-none focus:border-red-500 placeholder:text-slate-500" rows={2} placeholder="IDÉE DE CADEAU RAPIDE" value={wishlistText} onChange={(e) => setWishlistText(e.target.value)} />
+                <div className="relative">
+                  <Edit3 className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
+                  <input 
+                    className="w-full bg-slate-800 border-2 border-slate-700 rounded-2xl p-5 pl-14 text-xl text-white font-black italic outline-none focus:border-red-500 placeholder:text-slate-500" 
+                    placeholder="NOM DU GROUPE" 
+                    value={editGroupName} 
+                    onChange={(e) => setEditGroupName(e.target.value)} 
+                  />
+                </div>
                 
-                {/* NOUVEAU : Champ pour modifier le budget depuis l'accueil */}
                 <div className="relative">
                   <Banknote className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
                   <input 
                     className="w-full bg-slate-800 border-2 border-slate-700 rounded-2xl p-5 pl-14 text-lg text-yellow-400 font-black italic outline-none focus:border-red-500 placeholder:text-slate-500" 
                     placeholder="MODIFIER LE BUDGET MAX (€)" 
                     value={editBudget} 
-                    onChange={(e) => setEditBudget(e.target.value.replace(/[^0-9]/g, ''))} // Filtre Chiffres Uniquement
+                    onChange={(e) => setEditBudget(e.target.value.replace(/[^0-9]/g, ''))} 
                   />
                 </div>
               </div>
-              <button onClick={updateWishlist} className="mt-6 w-full py-4 bg-red-600 hover:bg-red-500 text-white text-xl border-4 border-slate-900 rounded-2xl transition-all shadow-[4px_4px_0px_0px_#000000]">SAUVEGARDER MES INFOS</button>
+              <button onClick={updateGroupSettings} disabled={loading} className="mt-6 w-full py-4 bg-red-600 hover:bg-red-500 text-white text-xl border-4 border-slate-900 rounded-2xl transition-all shadow-[4px_4px_0px_0px_#000000] disabled:opacity-50 flex justify-center">
+                  {loading ? <Loader2 className="animate-spin" size={24}/> : "SAUVEGARDER LES PARAMÈTRES"}
+              </button>
             </div>
 
             <div className="space-y-6">
@@ -334,13 +333,24 @@ export default function SecretSanta() {
               {selectedGroup.participants?.map((p: any) => {
                 const maCible = selectedGroup.participants.find((t: any) => t.id === p.target_id);
                 const isRevealed = revealedTargets[p.id];
-                const targetData = maCible ? parseWishlistSafe(maCible.wishlist) : { mine: [], others: [] };
-                const firstIdea = targetData.mine[0];
 
                 return (
                   <div key={p.id} className={`p-6 md:p-8 rounded-3xl border-[4px] flex flex-col gap-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-slate-50 border-slate-900'}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-3xl">{p.name}</span>
+                    
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      
+                      {/* NOUVEAU : LE BOUTON COPIER */}
+                      <div className="flex items-center gap-4">
+                        <span className="text-3xl">{p.name}</span>
+                        <button 
+                            onClick={() => copyMagicLink(p.id, p.name)} 
+                            title="Copier le lien d'accès secret"
+                            className={`p-2 rounded-xl border-2 transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[1px] hover:shadow-none ${isDark ? 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white' : 'bg-white border-slate-900 text-slate-700 hover:text-black hover:bg-slate-100'}`}
+                        >
+                            <Copy size={20} />
+                        </button>
+                      </div>
+
                       <button onClick={() => setRevealedTargets(prev => ({...prev, [p.id]: !prev[p.id]}))} className={`p-4 rounded-2xl border-[4px] transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-none ${isRevealed ? (isDark ? 'bg-slate-700 text-white border-slate-600' : 'bg-slate-900 text-white border-slate-900') : (isDark ? 'bg-slate-800 text-white border-slate-600' : 'bg-white text-slate-900 border-slate-900')}`}>
                         {isRevealed ? <EyeOff size={24} /> : <Eye size={24} />}
                       </button>
@@ -349,16 +359,6 @@ export default function SecretSanta() {
                     {isRevealed && maCible && (
                       <div className={`p-6 rounded-2xl border-[4px] space-y-4 shadow-[4px_4px_0px_0px_rgba(220,38,38,1)] ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-900'}`}>
                         <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>DOIT OFFRIR À : <span className="text-red-500 text-xl ml-2">{maCible.name}</span></p>
-                        {firstIdea?.text ? (
-                            <p className={`text-xl border-l-4 border-green-500 pl-4 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>"{firstIdea.text}"</p>
-                        ) : (
-                            <p className={`italic text-sm border-l-4 pl-4 ${isDark ? 'text-slate-500 border-slate-700' : 'text-slate-400 border-slate-200'}`}>N'a pas encore rempli sa liste...</p>
-                        )}
-                        {firstIdea?.url && (
-                          <a href={firstIdea.url} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs transition-colors ${isDark ? 'bg-slate-700 text-white hover:bg-slate-600' : 'bg-slate-900 text-white hover:bg-slate-800'}`}>
-                            <ExternalLink size={14} /> VOIR LE LIEN
-                          </a>
-                        )}
                       </div>
                     )}
                   </div>
