@@ -286,7 +286,7 @@ export default function SecretSanta() {
                     <input placeholder="Ex: Famille 2024" className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} value={groupName} onChange={(e) => setGroupName(e.target.value)} />
                 </div>
                 <div className="space-y-2 md:col-span-1">
-                    <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>BUDGET MAX :</label>
+                    <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>BUDGET MAX : ( optionnel )</label>
                     <input 
                       placeholder="Ex: 50 (Chiffres)" 
                       className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} 
