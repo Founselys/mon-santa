@@ -1,37 +1,27 @@
 "use client";
 import React, { useState, useEffect, useCallback } from 'react';
-import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, Lock, Plus, Trash2 } from 'lucide-react';
+import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, Lock, Plus, Trash2, Moon, Sun, BellRing } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
 const formatUrl = (url: string) => {
   if (!url) return '';
   const trimmed = url.trim();
-  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-    return `https://${trimmed}`;
-  }
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return `https://${trimmed}`;
   return trimmed;
 };
 
 const parseWishlist = (raw: any) => {
   const defaultData = { mine: [], others: [] };
   if (!raw) return defaultData;
-  
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     let mine = Array.isArray(parsed?.mine) ? [...parsed.mine] : [];
     let others = Array.isArray(parsed?.others) ? [...parsed.others] : [];
-
-    if (parsed?.mine && !Array.isArray(parsed.mine) && parsed.mine.text) {
-      mine.push({ id: Date.now().toString(), text: parsed.mine.text, url: parsed.mine.url });
-    }
-    if (typeof parsed?.others === 'string' && parsed.others.trim() !== '') {
-      others.push({ id: Date.now().toString() + 'o', text: parsed.others, authorName: 'Le groupe' });
-    }
+    if (parsed?.mine && !Array.isArray(parsed.mine) && parsed.mine.text) mine.push({ id: Date.now().toString(), text: parsed.mine.text, url: parsed.mine.url });
+    if (typeof parsed?.others === 'string' && parsed.others.trim() !== '') others.push({ id: Date.now().toString() + 'o', text: parsed.others, authorName: 'Le groupe' });
     return { mine, others };
   } catch {
-    if (typeof raw === 'string' && raw.trim() !== '') {
-        return { mine: [{ id: Date.now().toString(), text: raw, url: '' }], others: [] };
-    }
+    if (typeof raw === 'string' && raw.trim() !== '') return { mine: [{ id: Date.now().toString(), text: raw, url: '' }], others: [] };
     return defaultData;
   }
 };
@@ -42,6 +32,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
+  const [groupBudget, setGroupBudget] = useState(""); // NOUVEAU : Récupération du budget
   const [dbError, setDbError] = useState("");
 
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -49,61 +40,63 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [newMyText, setNewMyText] = useState("");
   const [newMyUrl, setNewMyUrl] = useState("");
   const [newOtherText, setNewOtherText] = useState("");
-  const [newOtherUrl, setNewOtherUrl] = useState(""); // NOUVEAU : État pour l'URL des autres
+  const [newOtherUrl, setNewOtherUrl] = useState("");
+  
+  // NOUVEAU : États pour l'aide et le mode sombre
+  const [isDark, setIsDark] = useState(false);
+  const [isNudging, setIsNudging] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const myId = urlParams.get('p');
 
-      if (!myId) {
-        setDbError("Lien incomplet : Il manque ton ID secret (?p=...)");
-        setLoading(false); return;
-      }
+      if (!myId) { setDbError("Lien incomplet : Il manque ton ID secret (?p=...)"); setLoading(false); return; }
 
-      const { data: myData, error: meError } = await supabase.from('participants').select('*, groups(name)').eq('id', myId).single();
+      const { data: myData, error: meError } = await supabase.from('participants').select('*, groups(name, budget)').eq('id', myId).single();
 
       if (meError) { setDbError(meError.message); setLoading(false); return; }
 
       if (myData) {
         setMe(myData);
         setGroupName(myData.groups?.name || "Mon Groupe");
+        setGroupBudget(myData.groups?.budget || ""); // Stockage du budget
         setSelectedUserId(myData.target_id);
 
         const { data: groupData } = await supabase.from('participants').select('*').eq('group_id', myData.group_id).order('name', { ascending: true });
         if (groupData) setGroupParticipants(groupData);
       }
-    } catch (err: any) {
-      setDbError(err.message || "Erreur de connexion.");
-    }
+    } catch (err: any) { setDbError(err.message || "Erreur de connexion."); }
     setLoading(false);
   }, [params.groupId]);
 
   useEffect(() => {
+    if (localStorage.getItem('theme') === 'dark') setIsDark(true);
     loadData();
 
     const channel = supabase.channel(`group-${params.groupId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'participants', filter: `group_id=eq.${params.groupId}` }, 
-      (payload) => {
-        setGroupParticipants(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p));
-      }).subscribe();
+      (payload) => { setGroupParticipants(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p)); }).subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, [params.groupId, loadData]);
 
+  const toggleTheme = () => {
+    const newMode = !isDark;
+    setIsDark(newMode);
+    localStorage.setItem('theme', newMode ? 'dark' : 'light');
+  };
+
   const saveToDb = async (userId: string, dataObj: any) => {
     setSavingId(userId);
     const jsonStr = JSON.stringify(dataObj);
-    
     const { error } = await supabase.from('participants').update({ wishlist: jsonStr }).eq('id', userId);
     
-    if (error) {
-      alert("⚠️ Supabase a bloqué la sauvegarde ! \nErreur : " + error.message + "\n\n👉 Va sur Supabase > Table Editor > 'participants' > Et désactive le 'RLS' (Row Level Security) en haut à droite !");
-    } else {
+    if (error) alert("⚠️ Supabase a bloqué la sauvegarde ! \nErreur : " + error.message);
+    else {
       setGroupParticipants(prev => prev.map(p => p.id === userId ? { ...p, wishlist: jsonStr } : p));
       if (userId === me.id) setMe({ ...me, wishlist: jsonStr });
     }
-    
     setSavingId(null);
   };
 
@@ -124,16 +117,30 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const addOtherIdea = (targetId: string, currentWishlist: any) => {
     if (!newOtherText.trim()) return;
     const currentData = parseWishlist(currentWishlist);
-    // NOUVEAU : On inclut l'URL formatée ici
     currentData.others.push({ id: Date.now().toString(), text: newOtherText, authorName: me.name, url: formatUrl(newOtherUrl) });
     saveToDb(targetId, currentData);
-    setNewOtherText(""); setNewOtherUrl(""); // On réinitialise l'URL aussi
+    setNewOtherText(""); setNewOtherUrl("");
   };
 
   const deleteOtherIdea = (targetId: string, ideaId: string, currentWishlist: any) => {
     const currentData = parseWishlist(currentWishlist);
     currentData.others = currentData.others.filter((idea: any) => idea.id !== ideaId);
     saveToDb(targetId, currentData);
+  };
+
+  // NOUVEAU : Fonction pour envoyer le mail d'aide
+  const sendNudgeEmail = async (targetUser: any) => {
+    setIsNudging(true);
+    try {
+        await fetch('/api/nudge', {
+            method: 'POST',
+            body: JSON.stringify({ to: targetUser.email, targetName: targetUser.name, groupName: groupName })
+        });
+        alert(`Un petit mot secret a été envoyé à ${targetUser.name} pour l'encourager à remplir sa liste !`);
+    } catch (e) {
+        alert("Oups, impossible d'envoyer le message pour l'instant.");
+    }
+    setIsNudging(false);
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 italic font-black uppercase"><Loader2 className="animate-spin text-red-600 mr-2" /> Chargement...</div>;
@@ -145,15 +152,26 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const selectedData = parseWishlist(selectedUser.wishlist);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-black italic uppercase tracking-tighter text-slate-900">
-      <div className="max-w-6xl mx-auto space-y-8">
+    <div className={`min-h-screen p-4 md:p-8 font-black italic uppercase tracking-tighter transition-colors duration-300 ${isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
+      
+      {/* BOUTON THEME EN HAUT A DROITE */}
+      <div className="absolute top-4 right-4 md:top-8 md:right-8 z-50">
+        <button onClick={toggleTheme} className={`p-3 rounded-xl border-4 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] ${isDark ? 'bg-slate-800 text-white border-slate-700 hover:bg-slate-700' : 'bg-white text-slate-900 border-slate-900 hover:bg-slate-100'}`}>
+            {isDark ? <Sun size={24} /> : <Moon size={24} />}
+        </button>
+      </div>
+
+      <div className="max-w-6xl mx-auto space-y-8 mt-12 md:mt-0">
         
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b-4 border-slate-900 pb-6">
+        <div className={`flex flex-col md:flex-row justify-between items-center gap-4 border-b-4 pb-6 ${isDark ? 'border-slate-700' : 'border-slate-900'}`}>
           <div>
             <div className="bg-red-600 text-white px-4 py-1 rounded-full text-sm inline-block mb-2 shadow-sm">{groupName} 🎄</div>
-            <h1 className="text-3xl md:text-5xl leading-none">ESPACE DE <span className="text-red-600 underline decoration-4 underline-offset-4">{me.name}</span></h1>
+            {/* AFFICHAGE DU BUDGET */}
+            {groupBudget && <div className="ml-3 bg-yellow-400 text-yellow-900 px-4 py-1 rounded-full text-sm inline-block mb-2 shadow-sm">BUDGET : {groupBudget}</div>}
+            
+            <h1 className="text-3xl md:text-5xl leading-none">ESPACE DE <span className="text-red-500 underline decoration-4 underline-offset-4">{me.name}</span></h1>
           </div>
-          <p className="text-xs opacity-50 max-w-xs text-right hidden md:block">CLIQUE SUR UN PARTICIPANT POUR VOIR SA LISTE OU LUI SOUFFLER DES IDÉES.</p>
+          <p className={`text-xs max-w-xs text-right hidden md:block ${isDark ? 'text-slate-400' : 'opacity-50'}`}>CLIQUE SUR UN PARTICIPANT POUR VOIR SA LISTE OU LUI SOUFFLER DES IDÉES.</p>
         </div>
 
         <div className="flex flex-col md:flex-row gap-8">
@@ -169,14 +187,15 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                 return (
                   <div key={p.id} onClick={() => setSelectedUserId(p.id)}
                     className={`cursor-pointer p-5 rounded-3xl border-4 transition-all flex justify-between items-center
-                      ${isSelected ? 'border-slate-900 bg-slate-900 text-white shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] translate-x-2' : 'border-slate-900 bg-white hover:bg-slate-100 hover:translate-x-1 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]'}
+                      ${isSelected ? (isDark ? 'border-slate-600 bg-slate-700 text-white shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] translate-x-2' : 'border-slate-900 bg-slate-900 text-white shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] translate-x-2') 
+                      : (isDark ? 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:translate-x-1 shadow-[4px_4px_0px_0px_#0f172a]' : 'border-slate-900 bg-white hover:bg-slate-100 hover:translate-x-1 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]')}
                     `}
                   >
                     <div>
                       <span className="text-2xl">{p.name}</span>
-                      {isMe && <span className={`ml-2 text-[10px] px-2 py-0.5 rounded-full border-2 ${isSelected ? 'border-white text-white' : 'border-slate-900 text-slate-900'}`}>MOI</span>}
+                      {isMe && <span className={`ml-2 text-[10px] px-2 py-0.5 rounded-full border-2 ${isSelected ? 'border-white text-white' : (isDark ? 'border-slate-400 text-slate-400' : 'border-slate-900 text-slate-900')}`}>MOI</span>}
                     </div>
-                    {isMyTarget && <Gift className={isSelected ? "text-white" : "text-red-600"} size={28} />}
+                    {isMyTarget && <Gift className={isSelected ? "text-white" : "text-red-500"} size={28} />}
                   </div>
                 );
               })}
@@ -184,7 +203,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
           </div>
 
           <div className="w-full md:w-2/3">
-            <div className="bg-white border-4 border-slate-900 rounded-[3rem] p-6 md:p-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] relative overflow-hidden">
+            <div className={`border-4 rounded-[3rem] p-6 md:p-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] relative overflow-hidden ${isDark ? 'bg-slate-900 border-slate-700 shadow-[12px_12px_0px_0px_#0f172a]' : 'bg-white border-slate-900 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]'}`}>
               
               {selectedUser.id === me.target_id && (
                 <div className="absolute top-0 right-0 bg-red-600 text-white px-8 py-2 -rotate-2 origin-top-right text-xs shadow-md">
@@ -197,48 +216,60 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
               <div className="space-y-8">
                 
                 {/* ZONE 1 : BULLES VERTES */}
-                <div className="bg-green-50 border-4 border-green-500 rounded-3xl p-6 relative">
-                  <p className="text-xs text-green-700 mb-6 flex items-center gap-2">
+                <div className={`border-4 rounded-3xl p-6 relative ${isDark ? 'bg-green-950/30 border-green-800' : 'bg-green-50 border-green-500'}`}>
+                  <p className={`text-xs mb-6 flex items-center gap-2 ${isDark ? 'text-green-400' : 'text-green-700'}`}>
                     <CheckCircle2 size={16} /> 
                     {isLookingAtMyself ? "MA WISHLIST PERSONNELLE :" : `LES ENVIES DE ${selectedUser.name} :`}
                   </p>
                   
                   <div className="space-y-3 mb-6">
-                    {selectedData.mine.length === 0 && <p className="opacity-40 text-lg text-green-800">Aucune idée pour l'instant...</p>}
+                    {selectedData.mine.length === 0 && (
+                        <div>
+                            <p className={`opacity-40 text-lg ${isDark ? 'text-green-500' : 'text-green-800'}`}>Aucune idée pour l'instant...</p>
+                            
+                            {/* NOUVEAU : BOUTON J'AI BESOIN D'AIDE */}
+                            {!isLookingAtMyself && selectedUser.id === me.target_id && (
+                                <button onClick={() => sendNudgeEmail(selectedUser)} disabled={isNudging} className="mt-4 bg-orange-500 text-white px-4 py-3 rounded-xl hover:bg-orange-600 transition-colors flex items-center gap-2 border-2 border-orange-700 shadow-[4px_4px_0px_0px_#9a3412]">
+                                    {isNudging ? <Loader2 className="animate-spin" size={20} /> : <><BellRing size={20} /> J'AI BESOIN D'AIDE</>}
+                                </button>
+                            )}
+                        </div>
+                    )}
+                    
                     {selectedData.mine.map((idea: any) => (
-                      <div key={idea.id} className="bg-green-400 text-green-950 border-2 border-green-600 p-4 rounded-2xl shadow-[4px_4px_0px_0px_#166534] flex justify-between items-start gap-4">
+                      <div key={idea.id} className={`border-2 p-4 rounded-2xl flex justify-between items-start gap-4 ${isDark ? 'bg-green-900 border-green-700 text-green-100 shadow-[4px_4px_0px_0px_#14532d]' : 'bg-green-400 text-green-950 border-green-600 shadow-[4px_4px_0px_0px_#166534]'}`}>
                         <div>
                           <p className="text-xl leading-tight">{idea.text}</p>
                           {idea.url && (
-                            <a href={idea.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-green-800 bg-green-300 px-3 py-1 rounded-lg mt-2 text-[10px] hover:bg-green-200 transition-colors">
+                            <a href={idea.url} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg mt-2 text-[10px] transition-colors ${isDark ? 'text-green-100 bg-green-700 hover:bg-green-600' : 'text-green-800 bg-green-300 hover:bg-green-200'}`}>
                               <ExternalLink size={12} /> VOIR LE LIEN
                             </a>
                           )}
                         </div>
                         {isLookingAtMyself && (
-                          <button onClick={() => deleteMyIdea(idea.id)} className="text-green-700 hover:text-red-600 transition-colors p-1"><Trash2 size={18} /></button>
+                          <button onClick={() => deleteMyIdea(idea.id)} className={`transition-colors p-1 ${isDark ? 'text-green-400 hover:text-red-400' : 'text-green-700 hover:text-red-600'}`}><Trash2 size={18} /></button>
                         )}
                       </div>
                     ))}
                   </div>
 
                   {isLookingAtMyself && (
-                    <div className="bg-white p-4 rounded-2xl border-2 border-green-200">
+                    <div className={`p-4 rounded-2xl border-2 ${isDark ? 'bg-slate-800 border-green-800' : 'bg-white border-green-200'}`}>
                       <input 
-                        className="w-full bg-transparent border-none p-0 mb-2 focus:ring-0 text-lg text-green-900 font-black italic placeholder:text-green-300"
+                        className={`w-full bg-transparent border-none p-0 mb-2 focus:ring-0 text-lg font-black italic ${isDark ? 'text-green-100 placeholder:text-green-700' : 'text-green-900 placeholder:text-green-300'}`}
                         placeholder="Qu'est-ce qui te ferait plaisir ?" 
                         value={newMyText} onChange={(e) => setNewMyText(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && addMyIdea()}
                       />
-                      <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 border-t-2 border-green-100 pt-2">
-                        <LinkIcon size={16} className="text-green-500 hidden md:block" />
+                      <div className={`flex flex-col md:flex-row items-stretch md:items-center gap-2 border-t-2 pt-2 ${isDark ? 'border-green-900' : 'border-green-100'}`}>
+                        <LinkIcon size={16} className={`hidden md:block ${isDark ? 'text-green-600' : 'text-green-500'}`} />
                         <input 
-                          className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-xs text-green-800 font-black italic placeholder:text-green-300"
+                          className={`flex-1 bg-transparent border-none p-0 focus:ring-0 text-xs font-black italic ${isDark ? 'text-green-300 placeholder:text-green-700' : 'text-green-800 placeholder:text-green-300'}`}
                           placeholder="Lien URL (Optionnel)"
                           value={newMyUrl} onChange={(e) => setNewMyUrl(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && addMyIdea()}
                         />
-                        <button onClick={addMyIdea} disabled={savingId === me.id} className="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 flex items-center justify-center gap-2 text-xs">
+                        <button onClick={addMyIdea} disabled={savingId === me.id} className="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-500 flex items-center justify-center gap-2 text-xs">
                            {savingId === me.id ? <Loader2 className="animate-spin" size={14} /> : <><Plus size={14}/> AJOUTER</>}
                         </button>
                       </div>
@@ -247,13 +278,13 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                 </div>
 
                 {/* ZONE 2 : BULLES NOIRES */}
-                <div className="bg-slate-900 text-white border-4 border-slate-900 rounded-3xl p-6 relative transform rotate-1">
+                <div className={`border-4 rounded-3xl p-6 relative transform rotate-1 ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-slate-900 text-white border-slate-900'}`}>
                   
                   {isLookingAtMyself ? (
                     <div className="text-center py-8 opacity-80 space-y-4">
                       <Lock className="mx-auto text-red-500 mb-2" size={40} />
-                      <p className="text-xl text-slate-300">ESPACE SECRET</p>
-                      <p className="text-xs text-slate-500">LES IDÉES QUE LE GROUPE TE PRÉPARE SONT CACHÉES ICI.<br/>ON GARDE LA SURPRISE ! 🤫</p>
+                      <p className={`text-xl ${isDark ? 'text-slate-300' : 'text-slate-300'}`}>ESPACE SECRET</p>
+                      <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>LES IDÉES QUE LE GROUPE TE PRÉPARE SONT CACHÉES ICI.<br/>ON GARDE LA SURPRISE ! 🤫</p>
                     </div>
                   ) : (
                     <div>
@@ -266,33 +297,29 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                       <div className="space-y-3 mb-6">
                          {selectedData.others.length === 0 && <p className="opacity-40 text-lg">Aucune idée suggérée...</p>}
                          {selectedData.others.map((idea: any) => (
-                          <div key={idea.id} className="bg-slate-800 border-2 border-slate-700 p-4 rounded-2xl shadow-[4px_4px_0px_0px_#000000] flex justify-between items-start gap-4 group">
+                          <div key={idea.id} className={`border-2 p-4 rounded-2xl flex justify-between items-start gap-4 group ${isDark ? 'bg-slate-700 border-slate-600 shadow-[4px_4px_0px_0px_#000000]' : 'bg-slate-800 border-slate-700 shadow-[4px_4px_0px_0px_#000000]'}`}>
                             <div>
                               <p className="text-xl leading-tight text-slate-100">{idea.text}</p>
-                              
-                              {/* NOUVEAU : Affichage du lien sur les bulles noires */}
                               {idea.url && (
-                                <a href={idea.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-slate-300 bg-slate-700 px-3 py-1 rounded-lg mt-2 text-[10px] hover:bg-slate-600 transition-colors border border-slate-600">
+                                <a href={idea.url} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg mt-2 text-[10px] transition-colors border ${isDark ? 'text-slate-200 bg-slate-600 hover:bg-slate-500 border-slate-500' : 'text-slate-300 bg-slate-700 hover:bg-slate-600 border-slate-600'}`}>
                                   <ExternalLink size={12} /> VOIR LE LIEN
                                 </a>
                               )}
-                              
                               <p className="text-[10px] text-slate-400 mt-2">SOUFFLÉ PAR : {idea.authorName}</p>
                             </div>
-                            <button onClick={() => deleteOtherIdea(selectedUser.id, idea.id, selectedUser.wishlist)} className="text-slate-600 hover:text-red-500 transition-colors p-1 opacity-0 group-hover:opacity-100"><Trash2 size={18} /></button>
+                            <button onClick={() => deleteOtherIdea(selectedUser.id, idea.id, selectedUser.wishlist)} className={`transition-colors p-1 opacity-0 group-hover:opacity-100 ${isDark ? 'text-slate-400 hover:text-red-400' : 'text-slate-600 hover:text-red-500'}`}><Trash2 size={18} /></button>
                           </div>
                         ))}
                       </div>
 
-                      {/* NOUVEAU : Input double avec Lien optionnel pour les bulles noires */}
-                      <div className="bg-slate-800 p-4 rounded-2xl border-2 border-slate-700">
+                      <div className={`p-4 rounded-2xl border-2 ${isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-800 border-slate-700'}`}>
                         <input 
                           className="w-full bg-transparent border-none p-0 mb-2 focus:ring-0 text-sm text-white font-black italic placeholder:text-slate-500"
                           placeholder={`Ajouter une idée pour ${selectedUser.name}...`} 
                           value={newOtherText} onChange={(e) => setNewOtherText(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && addOtherIdea(selectedUser.id, selectedUser.wishlist)}
                         />
-                        <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 border-t-2 border-slate-700 pt-2">
+                        <div className={`flex flex-col md:flex-row items-stretch md:items-center gap-2 border-t-2 pt-2 ${isDark ? 'border-slate-600' : 'border-slate-700'}`}>
                           <LinkIcon size={16} className="text-slate-500 hidden md:block" />
                           <input 
                             className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-xs text-white font-black italic placeholder:text-slate-500"
@@ -300,7 +327,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                             value={newOtherUrl} onChange={(e) => setNewOtherUrl(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && addOtherIdea(selectedUser.id, selectedUser.wishlist)}
                           />
-                          <button onClick={() => addOtherIdea(selectedUser.id, selectedUser.wishlist)} disabled={savingId === selectedUser.id} className="px-3 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 flex items-center justify-center gap-2 text-xs">
+                          <button onClick={() => addOtherIdea(selectedUser.id, selectedUser.wishlist)} disabled={savingId === selectedUser.id} className="px-3 py-2 bg-red-600 text-white rounded-xl hover:bg-red-500 flex items-center justify-center gap-2 text-xs">
                             {savingId === selectedUser.id ? <Loader2 className="animate-spin" size={14} /> : "ENVOYER"}
                           </button>
                         </div>

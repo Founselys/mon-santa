@@ -1,9 +1,8 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Gift, LogOut, Users, ArrowLeft, Eye, EyeOff, X, CheckCircle2, Loader2, Calendar, List, ExternalLink, Link as LinkIcon, Ban, ArrowRight } from 'lucide-react';
+import { Plus, Trash2, Gift, LogOut, Users, ArrowLeft, Eye, EyeOff, X, CheckCircle2, Loader2, List, ExternalLink, Link as LinkIcon, ArrowRight, Moon, Sun } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
-// NOUVEAU PARSER : Pour ne pas casser le nouveau système de bulles depuis l'accueil
 const parseWishlistSafe = (raw: any) => {
   const defaultData = { mine: [], others: [] };
   if (!raw) return defaultData;
@@ -28,6 +27,7 @@ export default function SecretSanta() {
   const [user, setUser] = useState<any>(null);
   const [groupName, setGroupName] = useState('');
   const [eventDate, setEventDate] = useState(''); 
+  const [budget, setBudget] = useState(''); // NOUVEAU : Le budget
   const [loading, setLoading] = useState(false);
   const [mesGroupes, setMesGroupes] = useState<any[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
@@ -35,6 +35,9 @@ export default function SecretSanta() {
   
   const [wishlistText, setWishlistText] = useState('');
   const [wishlistUrl, setWishlistUrl] = useState('');
+  
+  // NOUVEAU : Mode sombre
+  const [isDark, setIsDark] = useState(false);
 
   const [participants, setParticipants] = useState([
     { id: 1, name: '', email: '', exclude: '' },
@@ -44,6 +47,9 @@ export default function SecretSanta() {
   const [revealedTargets, setRevealedTargets] = useState<{ [key: string]: boolean }>({});
 
   useEffect(() => {
+    // Charger le mode sombre depuis la mémoire
+    if (localStorage.getItem('theme') === 'dark') setIsDark(true);
+
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
@@ -51,6 +57,12 @@ export default function SecretSanta() {
     };
     checkUser();
   }, []);
+
+  const toggleTheme = () => {
+    const newMode = !isDark;
+    setIsDark(newMode);
+    localStorage.setItem('theme', newMode ? 'dark' : 'light');
+  };
 
   const fetchMesGroupes = async (userId: string) => {
     const { data, error } = await supabase
@@ -78,7 +90,6 @@ export default function SecretSanta() {
     if (!monP) return;
     setLoading(true);
 
-    // Sauvegarde sécurisée pour la V2
     const currentData = parseWishlistSafe(monP.wishlist);
     if (currentData.mine.length > 0) {
         currentData.mine[0].text = wishlistText;
@@ -115,11 +126,7 @@ export default function SecretSanta() {
       let echec = false;
 
       for (let p of participants) {
-        let valides = ciblesPossibles.filter(c => 
-          c.email !== p.email && 
-          c.name !== p.exclude  
-        );
-
+        let valides = ciblesPossibles.filter(c => c.email !== p.email && c.name !== p.exclude);
         if (valides.length === 0) { echec = true; break; }
         let choix = valides[Math.floor(Math.random() * valides.length)];
         tirageTemporaire[p.email] = choix.email;
@@ -134,7 +141,8 @@ export default function SecretSanta() {
     }
 
     try {
-      const { data: group } = await supabase.from('groups').insert([{ name: groupName, organizer_id: user.id, delete_at: eventDate || null }]).select().single();
+      // NOUVEAU : Enregistrement du budget
+      const { data: group } = await supabase.from('groups').insert([{ name: groupName, organizer_id: user.id, delete_at: eventDate || null, budget: budget }]).select().single();
       const { data: dbParticipants } = await supabase.from('participants').insert(participants.map(p => ({ group_id: group.id, name: p.name, email: p.email }))).select();
       
       const emailsToSend = [];
@@ -155,20 +163,25 @@ export default function SecretSanta() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans text-left italic font-black uppercase tracking-tighter">
+    <div className={`min-h-screen font-sans text-left italic font-black uppercase tracking-tighter transition-colors duration-300 ${isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
       
-      {/* NOUVELLE NAVBAR BRUTALISTE */}
       <nav className="bg-red-600 border-b-[6px] border-slate-900 px-6 py-4 sticky top-0 z-50 text-white shadow-sm">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3 font-black text-white text-3xl tracking-tighter cursor-pointer hover:scale-105 transition-transform origin-left" onClick={() => setStep('home')}>
             <Gift fill="currentColor" size={36} className="drop-shadow-md" /> SANTAPP
           </div>
-          {user && (
-            <button onClick={() => { supabase.auth.signOut(); setUser(null); setStep('home'); }} 
-            className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center gap-2 text-xs">
-              <LogOut size={18} /> <span className="hidden md:block">DÉCONNEXION</span>
+          <div className="flex items-center gap-4">
+            {/* BOUTON MODE SOMBRE */}
+            <button onClick={toggleTheme} className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                {isDark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
-          )}
+            {user && (
+              <button onClick={() => { supabase.auth.signOut(); setUser(null); setStep('home'); }} 
+              className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center gap-2 text-xs">
+                <LogOut size={18} /> <span className="hidden md:block">DÉCONNEXION</span>
+              </button>
+            )}
+          </div>
         </div>
       </nav>
 
@@ -178,25 +191,22 @@ export default function SecretSanta() {
           <div className="space-y-12">
             
             <div className="grid md:grid-cols-2 gap-8">
-              {/* CARTE NOUVEAU TIRAGE (Vert Flashy) */}
               <div className="bg-green-400 p-10 rounded-[3rem] border-[6px] border-slate-900 hover:-translate-y-2 transition-all cursor-pointer group shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]" onClick={() => user ? setStep('create') : handleLogin()}>
                 <div className="bg-white w-20 h-20 rounded-3xl border-4 border-slate-900 flex items-center justify-center text-slate-900 mb-6 group-hover:scale-110 transition-transform shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"><Plus size={40} /></div>
                 <h3 className="text-4xl text-slate-900 leading-none">NOUVEAU<br/>TIRAGE</h3>
               </div>
               
-              {/* CARTE STATS (Noire) */}
-              <div className="bg-slate-900 p-10 rounded-[3rem] border-[6px] border-slate-900 text-white shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] flex flex-col justify-center">
+              <div className={`p-10 rounded-[3rem] border-[6px] border-slate-900 shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] flex flex-col justify-center ${isDark ? 'bg-slate-900 text-white' : 'bg-slate-900 text-white'}`}>
                 <p className="text-8xl text-red-500 leading-none">{mesGroupes.length}</p>
                 <p className="opacity-80 text-xl mt-2 flex items-center gap-2"><List size={24}/> GROUPES ACTIFS</p>
               </div>
             </div>
 
-            {/* LISTE DES GROUPES */}
             <div className="space-y-6">
               <div className="flex items-center gap-4">
-                <div className="h-[4px] flex-1 bg-slate-900"></div>
+                <div className={`h-[4px] flex-1 ${isDark ? 'bg-slate-700' : 'bg-slate-900'}`}></div>
                 <h3 className="text-3xl">TES SESSIONS</h3>
-                <div className="h-[4px] flex-1 bg-slate-900"></div>
+                <div className={`h-[4px] flex-1 ${isDark ? 'bg-slate-700' : 'bg-slate-900'}`}></div>
               </div>
 
               {mesGroupes.length === 0 && <p className="text-center text-slate-400 py-10">AUCUN GROUPE POUR L'INSTANT...</p>}
@@ -211,12 +221,13 @@ export default function SecretSanta() {
                     setWishlistText(data.mine[0]?.text || ''); 
                     setWishlistUrl(data.mine[0]?.url || '');
                     setStep('view'); 
-                  }} className="bg-white p-6 md:p-8 rounded-3xl border-[4px] border-slate-900 flex justify-between items-center hover:-translate-y-1 hover:bg-red-50 transition-all cursor-pointer shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] group">
+                  }} className={`${isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-white border-slate-900 hover:bg-red-50'} p-6 md:p-8 rounded-3xl border-[4px] flex justify-between items-center hover:-translate-y-1 transition-all cursor-pointer shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] group`}>
                     <div>
                         <span className="text-3xl group-hover:text-red-600 transition-colors">{group.name}</span>
-                        <p className="text-xs text-slate-500 mt-2 flex items-center gap-1"><Users size={14}/> {group.participants?.length || 0} PARTICIPANTS</p>
+                        {group.budget && <span className="ml-4 bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs align-middle">BUDGET: {group.budget}</span>}
+                        <p className={`text-xs mt-2 flex items-center gap-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}><Users size={14}/> {group.participants?.length || 0} PARTICIPANTS</p>
                     </div>
-                    <button onClick={(e) => supprimerGroupe(group.id, e)} className="p-4 bg-slate-100 rounded-2xl border-2 border-slate-200 text-slate-400 hover:text-white hover:bg-red-600 hover:border-red-600 transition-all"><Trash2 size={24} /></button>
+                    <button onClick={(e) => supprimerGroupe(group.id, e)} className={`p-4 rounded-2xl border-2 transition-all ${isDark ? 'bg-slate-900 border-slate-600 text-slate-500 hover:text-white hover:bg-red-600' : 'bg-slate-100 border-slate-200 text-slate-400 hover:text-white hover:bg-red-600 hover:border-red-600'}`}><Trash2 size={24} /></button>
                   </div>
                 ))}
               </div>
@@ -225,42 +236,47 @@ export default function SecretSanta() {
         )}
 
         {step === 'create' && (
-          <div className="bg-white rounded-[3rem] border-[6px] border-slate-900 shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] p-8 md:p-12 animate-in slide-in-from-bottom-4 duration-500 relative overflow-hidden">
-            <button onClick={() => setStep('home')} className="mb-8 text-slate-500 flex items-center gap-2 text-sm hover:text-red-600 transition-colors bg-slate-100 px-4 py-2 rounded-xl border-2 border-slate-200 hover:border-red-200"><ArrowLeft size={18} /> RETOUR</button>
+          <div className={`${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-900'} rounded-[3rem] border-[6px] shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] p-8 md:p-12 animate-in slide-in-from-bottom-4 duration-500 relative overflow-hidden`}>
+            <button onClick={() => setStep('home')} className={`mb-8 flex items-center gap-2 text-sm transition-colors px-4 py-2 rounded-xl border-2 ${isDark ? 'text-slate-300 bg-slate-700 border-slate-600 hover:text-red-400' : 'text-slate-500 bg-slate-100 border-slate-200 hover:text-red-600'}`}><ArrowLeft size={18} /> RETOUR</button>
             <h2 className="text-5xl md:text-7xl mb-10 leading-none">CONFIGURATION</h2>
             
             <div className="space-y-10">
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                    <label className="text-xs text-slate-500 ml-2">NOM DU GROUPE :</label>
-                    <input placeholder="Ex: Famille 2024" className="w-full p-5 text-xl rounded-2xl border-[4px] border-slate-900 outline-none focus:border-red-500 focus:bg-red-50 bg-slate-50 transition-colors placeholder:text-slate-300" value={groupName} onChange={(e) => setGroupName(e.target.value)} />
+              <div className="grid md:grid-cols-3 gap-6">
+                <div className="space-y-2 md:col-span-1">
+                    <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>NOM DU GROUPE :</label>
+                    <input placeholder="Ex: Famille 2024" className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} value={groupName} onChange={(e) => setGroupName(e.target.value)} />
                 </div>
-                <div className="space-y-2">
-                    <label className="text-xs text-slate-500 ml-2">DATE DE L'ÉVÉNEMENT :</label>
-                    <input type="date" className="w-full p-5 text-xl rounded-2xl border-[4px] border-slate-900 outline-none focus:border-red-500 focus:bg-red-50 bg-slate-50 transition-colors text-slate-600" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+                {/* NOUVEAU : CHAMP BUDGET */}
+                <div className="space-y-2 md:col-span-1">
+                    <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>BUDGET MAX :</label>
+                    <input placeholder="Ex: 50€ (Optionnel)" className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} value={budget} onChange={(e) => setBudget(e.target.value)} />
+                </div>
+                <div className="space-y-2 md:col-span-1">
+                    <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>DATE (OPTIONNEL) :</label>
+                    <input type="date" className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-slate-300' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 text-slate-600'}`} value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
                 </div>
               </div>
 
-              <div className="space-y-4 bg-slate-100 p-6 md:p-8 rounded-[2rem] border-[4px] border-slate-900">
+              <div className={`space-y-4 p-6 md:p-8 rounded-[2rem] border-[4px] ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-slate-100 border-slate-900'}`}>
                 <h3 className="text-2xl mb-4 flex items-center gap-2"><Users size={24}/> LES PARTICIPANTS</h3>
                 {participants.map((p, index) => (
-                  <div key={p.id} className="p-4 rounded-2xl bg-white border-4 border-slate-900 flex flex-wrap gap-4 items-center relative group shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-                    <span className="text-red-200 w-6 text-xl">{index + 1}</span>
-                    <input placeholder="Prénom" className="flex-1 min-w-[120px] p-3 text-lg rounded-xl bg-slate-50 border-2 border-slate-200 outline-none focus:border-slate-900 transition-colors" value={p.name} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, name: e.target.value} : item))} />
-                    <input placeholder="Email" className="flex-1 min-w-[150px] p-3 text-lg rounded-xl bg-slate-50 border-2 border-slate-200 outline-none focus:border-slate-900 transition-colors" value={p.email} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, email: e.target.value} : item))} />
-                    <select className="flex-1 min-w-[150px] p-3 text-sm rounded-xl bg-red-50 text-red-600 border-2 border-red-200 outline-none focus:border-red-600 transition-colors" value={p.exclude} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, exclude: e.target.value} : item))}>
+                  <div key={p.id} className={`p-4 rounded-2xl border-4 flex flex-wrap gap-4 items-center relative group shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-900'}`}>
+                    <span className="text-red-400 w-6 text-xl">{index + 1}</span>
+                    <input placeholder="Prénom" className={`flex-1 min-w-[120px] p-3 text-lg rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-slate-700 border-slate-600 focus:border-white text-white' : 'bg-slate-50 border-slate-200 focus:border-slate-900 text-slate-900'}`} value={p.name} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, name: e.target.value} : item))} />
+                    <input placeholder="Email" className={`flex-1 min-w-[150px] p-3 text-lg rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-slate-700 border-slate-600 focus:border-white text-white' : 'bg-slate-50 border-slate-200 focus:border-slate-900 text-slate-900'}`} value={p.email} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, email: e.target.value} : item))} />
+                    <select className={`flex-1 min-w-[150px] p-3 text-sm rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-red-950 text-red-400 border-red-900 focus:border-red-500' : 'bg-red-50 text-red-600 border-red-200 focus:border-red-600'}`} value={p.exclude} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, exclude: e.target.value} : item))}>
                         <option value="">PEUT PIOCHER TOUT LE MONDE</option>
                         {participants.filter(other => other.id !== p.id && other.name).map(other => (
                             <option key={other.id} value={other.name}>NE PAS PIOCHER : {other.name}</option>
                         ))}
                     </select>
-                    {participants.length > 3 && <button onClick={() => setParticipants(participants.filter(item => item.id !== p.id))} className="text-slate-400 hover:text-red-600 bg-slate-100 hover:bg-red-100 p-3 rounded-xl transition-colors"><X size={20}/></button>}
+                    {participants.length > 3 && <button onClick={() => setParticipants(participants.filter(item => item.id !== p.id))} className={`p-3 rounded-xl transition-colors ${isDark ? 'text-slate-500 hover:text-red-400 bg-slate-700 hover:bg-red-950' : 'text-slate-400 hover:text-red-600 bg-slate-100 hover:bg-red-100'}`}><X size={20}/></button>}
                   </div>
                 ))}
-                <button onClick={() => setParticipants([...participants, {id: Date.now(), name: '', email: '', exclude: ''}])} className="mt-4 px-6 py-3 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-colors flex items-center gap-2 border-2 border-slate-900"><Plus size={18}/> AJOUTER UN AMI</button>
+                <button onClick={() => setParticipants([...participants, {id: Date.now(), name: '', email: '', exclude: ''}])} className={`mt-4 px-6 py-3 rounded-xl transition-colors flex items-center gap-2 border-2 ${isDark ? 'bg-slate-700 text-white hover:bg-slate-600 border-slate-600' : 'bg-slate-900 text-white hover:bg-slate-800 border-slate-900'}`}><Plus size={18}/> AJOUTER UN AMI</button>
               </div>
               
-              <button onClick={lancerLeTirage} disabled={loading || !groupName} className="w-full py-6 rounded-[2rem] text-3xl bg-red-600 text-white border-[6px] border-slate-900 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:bg-red-500 hover:-translate-y-1 hover:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] disabled:bg-slate-300 disabled:border-slate-400 disabled:shadow-none disabled:translate-y-0 disabled:text-slate-500 transition-all">
+              <button onClick={lancerLeTirage} disabled={loading || !groupName} className={`w-full py-6 rounded-[2rem] text-3xl bg-red-600 text-white border-[6px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:bg-red-500 hover:-translate-y-1 hover:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] disabled:shadow-none disabled:translate-y-0 transition-all ${isDark ? 'border-slate-800 disabled:bg-slate-800 disabled:border-slate-700 disabled:text-slate-600' : 'border-slate-900 disabled:bg-slate-300 disabled:border-slate-400 disabled:text-slate-500'}`}>
                 {loading ? <Loader2 className="animate-spin mx-auto" size={40} /> : "LANCER LE TIRAGE 🎅"}
               </button>
             </div>
@@ -268,15 +284,15 @@ export default function SecretSanta() {
         )}
 
         {step === 'view' && selectedGroup && (
-          <div className="bg-white rounded-[3rem] border-[6px] border-slate-900 shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] p-8 md:p-12">
+          <div className={`${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-900'} rounded-[3rem] border-[6px] shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] p-8 md:p-12`}>
             
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
                 <div>
-                    <button onClick={() => setStep('home')} className="mb-4 text-slate-500 flex items-center gap-2 text-sm hover:text-red-600 transition-colors bg-slate-100 px-4 py-2 rounded-xl border-2 border-slate-200"><ArrowLeft size={18}/> RETOUR</button>
+                    <button onClick={() => setStep('home')} className={`mb-4 flex items-center gap-2 text-sm transition-colors px-4 py-2 rounded-xl border-2 ${isDark ? 'text-slate-300 bg-slate-700 border-slate-600 hover:text-red-400' : 'text-slate-500 bg-slate-100 border-slate-200 hover:text-red-600'}`}><ArrowLeft size={18}/> RETOUR</button>
                     <h2 className="text-5xl md:text-7xl leading-none">{selectedGroup.name}</h2>
+                    {selectedGroup.budget && <span className="inline-block mt-4 bg-yellow-400 text-yellow-900 px-4 py-2 rounded-full text-lg shadow-sm">BUDGET : {selectedGroup.budget}</span>}
                 </div>
                 
-                {/* NOUVEAU : BOUTON DIRECT VERS L'ESPACE WISHLIST (Le beau) */}
                 {myParticipantInfo && (
                     <a href={`/wishlist/${selectedGroup.id}?p=${myParticipantInfo.id}`} className="bg-green-500 text-white px-6 py-4 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-x-1 hover:-translate-y-1 hover:shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] transition-all flex items-center gap-3">
                         <span className="text-lg">ALLER SUR LA WISHLIST</span> <ArrowRight size={24} />
@@ -297,7 +313,7 @@ export default function SecretSanta() {
             </div>
 
             <div className="space-y-6">
-              <h3 className="text-3xl flex items-center gap-3"><Eye size={28}/> RÉSULTATS SECRETS (ORGANISATEUR)</h3>
+              <h3 className="text-3xl flex items-center gap-3"><Eye size={28}/> RÉSULTATS SECRETS</h3>
               {selectedGroup.participants?.map((p: any) => {
                 const maCible = selectedGroup.participants.find((t: any) => t.id === p.target_id);
                 const isRevealed = revealedTargets[p.id];
@@ -305,24 +321,24 @@ export default function SecretSanta() {
                 const firstIdea = targetData.mine[0];
 
                 return (
-                  <div key={p.id} className="p-6 md:p-8 rounded-3xl bg-slate-50 border-[4px] border-slate-900 flex flex-col gap-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                  <div key={p.id} className={`p-6 md:p-8 rounded-3xl border-[4px] flex flex-col gap-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-slate-50 border-slate-900'}`}>
                     <div className="flex items-center justify-between">
                       <span className="text-3xl">{p.name}</span>
-                      <button onClick={() => setRevealedTargets(prev => ({...prev, [p.id]: !prev[p.id]}))} className={`p-4 rounded-2xl border-[4px] transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-none ${isRevealed ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-900 border-slate-900'}`}>
+                      <button onClick={() => setRevealedTargets(prev => ({...prev, [p.id]: !prev[p.id]}))} className={`p-4 rounded-2xl border-[4px] transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-none ${isRevealed ? (isDark ? 'bg-slate-700 text-white border-slate-600' : 'bg-slate-900 text-white border-slate-900') : (isDark ? 'bg-slate-800 text-white border-slate-600' : 'bg-white text-slate-900 border-slate-900')}`}>
                         {isRevealed ? <EyeOff size={24} /> : <Eye size={24} />}
                       </button>
                     </div>
                     
                     {isRevealed && maCible && (
-                      <div className="p-6 bg-white rounded-2xl border-[4px] border-slate-900 space-y-4 shadow-[4px_4px_0px_0px_rgba(220,38,38,1)]">
-                        <p className="text-sm text-slate-400">DOIT OFFRIR À : <span className="text-red-600 text-xl ml-2">{maCible.name}</span></p>
+                      <div className={`p-6 rounded-2xl border-[4px] space-y-4 shadow-[4px_4px_0px_0px_rgba(220,38,38,1)] ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-900'}`}>
+                        <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>DOIT OFFRIR À : <span className="text-red-500 text-xl ml-2">{maCible.name}</span></p>
                         {firstIdea?.text ? (
-                            <p className="text-slate-800 text-xl border-l-4 border-green-500 pl-4">"{firstIdea.text}"</p>
+                            <p className={`text-xl border-l-4 border-green-500 pl-4 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>"{firstIdea.text}"</p>
                         ) : (
-                            <p className="text-slate-400 italic text-sm border-l-4 border-slate-200 pl-4">N'a pas encore rempli sa liste...</p>
+                            <p className={`italic text-sm border-l-4 pl-4 ${isDark ? 'text-slate-500 border-slate-700' : 'text-slate-400 border-slate-200'}`}>N'a pas encore rempli sa liste...</p>
                         )}
                         {firstIdea?.url && (
-                          <a href={firstIdea.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-white bg-slate-900 px-4 py-2 rounded-xl text-xs hover:bg-slate-800 transition-colors">
+                          <a href={firstIdea.url} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs transition-colors ${isDark ? 'bg-slate-700 text-white hover:bg-slate-600' : 'bg-slate-900 text-white hover:bg-slate-800'}`}>
                             <ExternalLink size={14} /> VOIR LE LIEN
                           </a>
                         )}
@@ -336,13 +352,13 @@ export default function SecretSanta() {
         )}
 
         {step === 'success' && (
-          <div className="bg-white p-12 md:p-20 rounded-[4rem] border-[6px] border-slate-900 shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] text-center animate-in zoom-in duration-500">
-            <div className="inline-block bg-green-100 p-8 rounded-full border-[6px] border-slate-900 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] mb-10 transform -rotate-6">
+          <div className={`${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-900'} p-12 md:p-20 rounded-[4rem] border-[6px] shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] text-center animate-in zoom-in duration-500`}>
+            <div className={`inline-block p-8 rounded-full border-[6px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] mb-10 transform -rotate-6 ${isDark ? 'bg-green-900 border-slate-700' : 'bg-green-100 border-slate-900'}`}>
                 <CheckCircle2 className="text-green-500" size={100} />
             </div>
             <h2 className="text-6xl md:text-8xl mb-10 leading-none">C'EST ENVOYÉ ! 🎅</h2>
-            <p className="text-xl text-slate-500 mb-12">Chaque participant va recevoir un e-mail avec son lien magique.</p>
-            <button onClick={() => setStep('home')} className="bg-red-600 text-white px-16 py-6 rounded-3xl hover:bg-red-500 transition-all border-[6px] border-slate-900 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-2xl">RETOUR À L'ACCUEIL</button>
+            <p className={`text-xl mb-12 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Chaque participant va recevoir un e-mail avec son lien magique.</p>
+            <button onClick={() => setStep('home')} className={`bg-red-600 text-white px-16 py-6 rounded-3xl hover:bg-red-500 transition-all border-[6px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-2xl ${isDark ? 'border-slate-800' : 'border-slate-900'}`}>RETOUR À L'ACCUEIL</button>
           </div>
         )}
       </main>
