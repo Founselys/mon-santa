@@ -15,16 +15,17 @@ export default function SecretSanta() {
   
   const [loading, setLoading] = useState(false);
   const [mesGroupes, setMesGroupes] = useState<any[]>([]);
-  const [mesParticipations, setMesParticipations] = useState<any[]>([]); // NOUVEAU : Participations
+  const [mesParticipations, setMesParticipations] = useState<any[]>([]); 
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
   const [myParticipantInfo, setMyParticipantInfo] = useState<any>(null);
   
   const [isDark, setIsDark] = useState(false);
 
-  const [participants, setParticipants] = useState([
-    { id: 1, name: '', email: '', exclude: '' },
-    { id: 2, name: '', email: '', exclude: '' },
-    { id: 3, name: '', email: '', exclude: '' }
+  // MODIFICATION : exclude est maintenant un tableau vide au lieu d'une chaîne
+  const [participants, setParticipants] = useState<{id: number, name: string, email: string, exclude: string[]}[]>([
+    { id: 1, name: '', email: '', exclude: [] },
+    { id: 2, name: '', email: '', exclude: [] },
+    { id: 3, name: '', email: '', exclude: [] }
   ]);
   const [revealedTargets, setRevealedTargets] = useState<{ [key: string]: boolean }>({});
 
@@ -36,7 +37,7 @@ export default function SecretSanta() {
       setUser(user);
       if (user) {
           fetchMesGroupes(user.id);
-          fetchMesParticipations(user.email); // NOUVEAU
+          fetchMesParticipations(user.email); 
       }
     };
     checkUser();
@@ -57,7 +58,6 @@ export default function SecretSanta() {
     if (!error && data) setMesGroupes(data);
   };
 
-  // NOUVEAU : Récupère les groupes où je suis participant
   const fetchMesParticipations = async (email: string | undefined) => {
     if (!email) return;
     const { data, error } = await supabase
@@ -117,7 +117,8 @@ export default function SecretSanta() {
       let echec = false;
 
       for (let p of participants) {
-        let valides = ciblesPossibles.filter(c => c.email !== p.email && c.name !== p.exclude);
+        // MODIFICATION : Vérifie si le nom de la cible est dans le tableau d'exclusions
+        let valides = ciblesPossibles.filter(c => c.email !== p.email && !p.exclude.includes(c.name));
         if (valides.length === 0) { echec = true; break; }
         let choix = valides[Math.floor(Math.random() * valides.length)];
         tirageTemporaire[p.email] = choix.email;
@@ -128,7 +129,7 @@ export default function SecretSanta() {
 
     if (!success) {
       setLoading(false);
-      return alert("Tirage impossible avec ces exclusions. Essaie de les réduire.");
+      return alert("Tirage impossible avec ces exclusions. Il y a un blocage mathématique, essaie d'en enlever !");
     }
 
     try {
@@ -183,7 +184,7 @@ export default function SecretSanta() {
                   await supabase.auth.signOut(); 
                   setUser(null); 
                   setMesGroupes([]); 
-                  setMesParticipations([]); // 🧹 On vide aussi les participations
+                  setMesParticipations([]); 
                   setSelectedGroup(null); 
                   setStep('home'); 
               }} 
@@ -216,7 +217,6 @@ export default function SecretSanta() {
               </div>
             </div>
 
-            {/* NOUVEAU : TABLEAU DE BORD PARTICIPANT */}
             {mesParticipations.length > 0 && (
               <div className="space-y-6">
                 <div className="flex items-center gap-4">
@@ -241,7 +241,6 @@ export default function SecretSanta() {
               </div>
             )}
 
-            {/* SESSIONS ORGANISATEUR */}
             <div className="space-y-6 pt-8">
               <div className="flex items-center gap-4">
                 <div className={`h-[4px] flex-1 ${isDark ? 'bg-slate-700' : 'bg-slate-900'}`}></div>
@@ -286,7 +285,7 @@ export default function SecretSanta() {
                     <input placeholder="Ex: Famille 2024" className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} value={groupName} onChange={(e) => setGroupName(e.target.value)} />
                 </div>
                 <div className="space-y-2 md:col-span-1">
-                    <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>BUDGET MAX : ( optionnel )</label>
+                    <label className={`text-xs ml-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>BUDGET MAX :</label>
                     <input 
                       placeholder="Ex: 50 (Chiffres)" 
                       className={`w-full p-5 text-xl rounded-2xl border-[4px] outline-none transition-colors ${isDark ? 'bg-slate-900 border-slate-700 focus:border-red-500 text-white placeholder:text-slate-600' : 'bg-slate-50 border-slate-900 focus:border-red-500 focus:bg-red-50 placeholder:text-slate-300'}`} 
@@ -307,16 +306,38 @@ export default function SecretSanta() {
                     <span className="text-red-400 w-6 text-xl">{index + 1}</span>
                     <input placeholder="Prénom" className={`flex-1 min-w-[120px] p-3 text-lg rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-slate-700 border-slate-600 focus:border-white text-white' : 'bg-slate-50 border-slate-200 focus:border-slate-900 text-slate-900'}`} value={p.name} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, name: e.target.value} : item))} />
                     <input placeholder="Email" className={`flex-1 min-w-[150px] p-3 text-lg rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-slate-700 border-slate-600 focus:border-white text-white' : 'bg-slate-50 border-slate-200 focus:border-slate-900 text-slate-900'}`} value={p.email} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, email: e.target.value} : item))} />
-                    <select className={`flex-1 min-w-[150px] p-3 text-sm rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-red-950 text-red-400 border-red-900 focus:border-red-500' : 'bg-red-50 text-red-600 border-red-200 focus:border-red-600'}`} value={p.exclude} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, exclude: e.target.value} : item))}>
-                        <option value="">PEUT PIOCHER TOUT LE MONDE</option>
-                        {participants.filter(other => other.id !== p.id && other.name).map(other => (
-                            <option key={other.id} value={other.name}>NE PAS PIOCHER : {other.name}</option>
-                        ))}
-                    </select>
+                    
+                    {/* NOUVELLE ZONE D'EXCLUSIONS MULTIPLES */}
+                    <div className="flex-1 min-w-[200px] flex flex-col gap-2">
+                        <select className={`w-full p-3 text-sm rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-red-950 text-red-400 border-red-900 focus:border-red-500' : 'bg-red-50 text-red-600 border-red-200 focus:border-red-600'}`} 
+                            value="" 
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                if(val && !p.exclude.includes(val)){
+                                   setParticipants(participants.map(item => item.id === p.id ? {...item, exclude: [...item.exclude, val]} : item))
+                                }
+                            }}>
+                            <option value="">AJOUTER UNE EXCLUSION...</option>
+                            {participants.filter(other => other.id !== p.id && other.name && !p.exclude.includes(other.name)).map(other => (
+                                <option key={other.id} value={other.name}>NE PAS PIOCHER : {other.name}</option>
+                            ))}
+                        </select>
+                        {p.exclude.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                                {p.exclude.map(ex => (
+                                    <span key={ex} onClick={() => setParticipants(participants.map(item => item.id === p.id ? {...item, exclude: item.exclude.filter(e => e !== ex)} : item))} className={`text-xs px-2 py-1 rounded-lg border-2 cursor-pointer flex items-center gap-1 transition-colors ${isDark ? 'bg-red-900/50 border-red-800 text-red-200 hover:bg-red-800' : 'bg-red-100 border-red-200 text-red-700 hover:bg-red-200'}`}>
+                                        {ex} <X size={12}/>
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
                     {participants.length > 3 && <button onClick={() => setParticipants(participants.filter(item => item.id !== p.id))} className={`p-3 rounded-xl transition-colors ${isDark ? 'text-slate-500 hover:text-red-400 bg-slate-700 hover:bg-red-950' : 'text-slate-400 hover:text-red-600 bg-slate-100 hover:bg-red-100'}`}><X size={20}/></button>}
                   </div>
                 ))}
-                <button onClick={() => setParticipants([...participants, {id: Date.now(), name: '', email: '', exclude: ''}])} className={`mt-4 px-6 py-3 rounded-xl transition-colors flex items-center gap-2 border-2 ${isDark ? 'bg-slate-700 text-white hover:bg-slate-600 border-slate-600' : 'bg-slate-900 text-white hover:bg-slate-800 border-slate-900'}`}><Plus size={18}/> AJOUTER UN AMI</button>
+                {/* MODIFICATION : Ajout d'un tableau vide pour exclude au clic sur Ajouter */}
+                <button onClick={() => setParticipants([...participants, {id: Date.now(), name: '', email: '', exclude: []}])} className={`mt-4 px-6 py-3 rounded-xl transition-colors flex items-center gap-2 border-2 ${isDark ? 'bg-slate-700 text-white hover:bg-slate-600 border-slate-600' : 'bg-slate-900 text-white hover:bg-slate-800 border-slate-900'}`}><Plus size={18}/> AJOUTER UN AMI</button>
               </div>
               
               <button onClick={lancerLeTirage} disabled={loading || !groupName} className={`w-full py-6 rounded-[2rem] text-3xl bg-red-600 text-white border-[6px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:bg-red-500 hover:-translate-y-1 hover:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] disabled:shadow-none disabled:translate-y-0 transition-all ${isDark ? 'border-slate-800 disabled:bg-slate-800 disabled:border-slate-700 disabled:text-slate-600' : 'border-slate-900 disabled:bg-slate-300 disabled:border-slate-400 disabled:text-slate-500'}`}>
