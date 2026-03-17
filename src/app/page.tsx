@@ -1,267 +1,220 @@
 "use client";
-import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Gift, LogOut, Users, ArrowLeft, Eye, EyeOff, X, CheckCircle2, Loader2, Calendar, List, ExternalLink, Link as LinkIcon, Ban } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, MessageSquare } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
-export default function SecretSanta() {
-  const [step, setStep] = useState('home'); 
-  const [user, setUser] = useState<any>(null);
-  const [groupName, setGroupName] = useState('');
-  const [eventDate, setEventDate] = useState(''); 
-  const [loading, setLoading] = useState(false);
-  const [mesGroupes, setMesGroupes] = useState<any[]>([]);
-  const [selectedGroup, setSelectedGroup] = useState<any>(null);
-  
-  const [wishlistText, setWishlistText] = useState('');
-  const [wishlistUrl, setWishlistUrl] = useState('');
+// Fonction pour séparer "Mes idées" (avec URL) et "Les idées du groupe"
+const parseWishlist = (raw: string) => {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.mine !== undefined) return parsed;
+    return { mine: { text: parsed.text || '', url: parsed.url || '' }, others: '' };
+  } catch {
+    return { mine: { text: raw || '', url: '' }, others: '' };
+  }
+};
 
-  const [participants, setParticipants] = useState([
-    { id: 1, name: '', email: '', exclude: '' },
-    { id: 2, name: '', email: '', exclude: '' },
-    { id: 3, name: '', email: '', exclude: '' }
-  ]);
-  const [revealedTargets, setRevealedTargets] = useState<{ [key: string]: boolean }>({});
+export default function WishlistPage({ params }: { params: { groupId: string } }) {
+  const [me, setMe] = useState<any>(null);
+  const [groupParticipants, setGroupParticipants] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [groupName, setGroupName] = useState("");
+
+  // États locaux pour TES idées
+  const [myText, setMyText] = useState("");
+  const [myUrl, setMyUrl] = useState("");
+
+  const loadData = useCallback(async () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const myId = urlParams.get('p');
+
+    if (!myId) {
+      setLoading(false);
+      return;
+    }
+
+    const { data: myData } = await supabase.from('participants').select('*, groups(name)').eq('id', myId).single();
+
+    if (myData) {
+      setMe(myData);
+      setGroupName(myData.groups?.name || "Mon Groupe");
+      
+      const myParsed = parseWishlist(myData.wishlist);
+      setMyText(myParsed.mine.text);
+      setMyUrl(myParsed.mine.url);
+
+      const { data: groupData } = await supabase.from('participants').select('*').eq('group_id', myData.group_id).order('name', { ascending: true });
+      if (groupData) setGroupParticipants(groupData);
+    }
+    setLoading(false);
+  }, [params.groupId]);
 
   useEffect(() => {
-    const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      if (user) fetchMesGroupes(user.id);
-    };
-    checkUser();
-  }, []);
+    loadData();
 
-  const fetchMesGroupes = async (userId: string) => {
-    const { data, error } = await supabase
-      .from('groups')
-      .select('*, participants(*)')
-      .eq('organizer_id', userId)
-      .order('created_at', { ascending: false });
-    if (!error && data) setMesGroupes(data);
+    // TEMPS RÉEL
+    const channel = supabase
+      .channel(`group-${params.groupId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'participants', filter: `group_id=eq.${params.groupId}` }, 
+      (payload) => {
+        setGroupParticipants(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p));
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [params.groupId, loadData]);
+
+  // SAUVEGARDER MES PROPRES IDÉES
+  const handleSaveMine = async () => {
+    setSavingId(me.id);
+    const data = parseWishlist(me.wishlist);
+    data.mine = { text: myText, url: myUrl };
+    await supabase.from('participants').update({ wishlist: JSON.stringify(data) }).eq('id', me.id);
+    
+    setMe({ ...me, wishlist: JSON.stringify(data) });
+    setSavingId(null);
   };
 
-  const handleLogin = async () => {
-    const email = window.prompt("Entre ton email pour recevoir ton lien de connexion :");
-    if (!email) return;
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email,
-      options: { emailRedirectTo: window.location.origin }
-    });
-    if (error) alert("Erreur : " + error.message);
-    else alert("Lien envoyé ! Vérifie tes spams.");
+  // SAUVEGARDER LES IDÉES SOUFFLÉES POUR LES AUTRES
+  const handleSaveOthers = async (id: string, othersText: string, currentRaw: string) => {
+    setSavingId(id);
+    const data = parseWishlist(currentRaw);
+    data.others = othersText;
+    await supabase.from('participants').update({ wishlist: JSON.stringify(data) }).eq('id', id);
+    setSavingId(null);
   };
 
-  const updateWishlist = async () => {
-    if (!user || !selectedGroup) return;
-    const monP = selectedGroup.participants.find((p: any) => p.email === user.email);
-    if (!monP) return;
-    setLoading(true);
-    const combinedData = JSON.stringify({ text: wishlistText, url: wishlistUrl });
-    const { error } = await supabase.from('participants').update({ wishlist: combinedData }).eq('id', monP.id);
-    if (!error) { alert("Cadeau mis à jour ! 🎁"); fetchMesGroupes(user.id); }
-    setLoading(false);
-  };
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 italic font-black uppercase"><Loader2 className="animate-spin text-red-600 mr-2" /> Chargement...</div>;
+  if (!me) return <div className="p-20 text-center font-black uppercase italic text-red-600">Accès Refusé</div>;
 
-  const parseWishlist = (raw: string) => {
-    try {
-      const parsed = JSON.parse(raw);
-      return { text: parsed.text || '', url: parsed.url || '' };
-    } catch { return { text: raw || '', url: '' }; }
-  };
-
-  const supprimerGroupe = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); 
-    if (!confirm("Supprimer ce groupe ?")) return;
-    await supabase.from('groups').delete().eq('id', id);
-    setMesGroupes(mesGroupes.filter(g => g.id !== id));
-    setStep('home');
-  };
-
-  const lancerLeTirage = async () => {
-    if (!user || !groupName.trim()) return alert("Nom du groupe requis");
-    setLoading(true);
-
-    let resultats: { [key: string]: string } = {}; // email -> email cible
-    let success = false;
-    let tentative = 0;
-
-    while (!success && tentative < 1000) {
-      tentative++;
-      let ciblesPossibles = [...participants];
-      let tirageTemporaire: { [key: string]: string } = {};
-      let echec = false;
-
-      for (let p of participants) {
-        let valides = ciblesPossibles.filter(c => 
-          c.email !== p.email && // Pas soi-même
-          c.name !== p.exclude   // Pas l'exclu
-        );
-
-        if (valides.length === 0) { echec = true; break; }
-        let choix = valides[Math.floor(Math.random() * valides.length)];
-        tirageTemporaire[p.email] = choix.email;
-        ciblesPossibles = ciblesPossibles.filter(c => c.email !== choix.email);
-      }
-      if (!echec) { resultats = tirageTemporaire; success = true; }
-    }
-
-    if (!success) {
-      setLoading(false);
-      return alert("Tirage impossible avec ces exclusions. Essaie de les réduire.");
-    }
-
-    try {
-      const { data: group } = await supabase.from('groups').insert([{ name: groupName, organizer_id: user.id, delete_at: eventDate || null }]).select().single();
-      const { data: dbParticipants } = await supabase.from('participants').insert(participants.map(p => ({ group_id: group.id, name: p.name, email: p.email }))).select();
-      
-      const emailsToSend = [];
-      for (let p of participants) {
-        const monProfilDb = dbParticipants!.find(db => db.email === p.email);
-        const cibleEmail = resultats[p.email];
-        const maCibleDb = dbParticipants!.find(db => db.email === cibleEmail);
-        
-        await supabase.from('participants').update({ target_id: maCibleDb!.id }).eq('id', monProfilDb!.id);
-        emailsToSend.push({ to: p.email, name: p.name, targetName: maCibleDb!.name, groupName, groupId: group.id, participantId: monProfilDb!.id });
-      }
-
-      await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emails: emailsToSend }) });
-      await fetchMesGroupes(user.id);
-      setStep('success');
-    } catch (e) { alert("Erreur."); }
-    setLoading(false);
-  };
+  const myTarget = groupParticipants.find(p => p.id === me.target_id);
+  const targetData = myTarget ? parseWishlist(myTarget.wishlist) : { mine: { text: '', url: '' }, others: '' };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans text-left italic font-black uppercase">
-      <nav className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-2 font-black text-red-600 text-2xl tracking-tighter cursor-pointer" onClick={() => setStep('home')}>
-            <Gift fill="currentColor" size={28} /> SANTAPP
-          </div>
-          {user && <button onClick={() => { supabase.auth.signOut(); setUser(null); setStep('home'); }} className="p-2 text-slate-400 hover:text-red-500 transition-all"><LogOut size={22} /></button>}
+    <div className="min-h-screen bg-slate-50 p-4 md:p-10 font-black italic uppercase tracking-tighter text-slate-900">
+      <div className="max-w-4xl mx-auto space-y-12">
+        
+        <div className="flex flex-col items-center text-center space-y-4">
+          <div className="bg-red-600 text-white px-6 py-2 rounded-full text-xl shadow-lg">{groupName} 🎄</div>
+          <h1 className="text-5xl md:text-8xl leading-none">Espace de <span className="text-red-600 underline decoration-8 underline-offset-8">{me.name}</span></h1>
         </div>
-      </nav>
 
-      <main className="max-w-4xl mx-auto py-12 px-6">
-        {step === 'home' && (
-          <div className="space-y-12">
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="bg-white p-10 rounded-[2.5rem] border-4 border-slate-200 hover:border-red-500 transition-all cursor-pointer group shadow-sm" onClick={() => user ? setStep('create') : handleLogin()}>
-                <div className="bg-red-50 w-16 h-16 rounded-2xl flex items-center justify-center text-red-600 mb-6 group-hover:scale-110 transition-transform"><Plus size={32} /></div>
-                <h3 className="text-2xl">Nouveau tirage</h3>
-              </div>
-              <div className="bg-slate-900 p-10 rounded-[2.5rem] text-white shadow-2xl flex flex-col justify-center">
-                <p className="text-5xl text-red-500">{mesGroupes.length}</p>
-                <p className="opacity-50 text-xs tracking-widest">Groupes actifs</p>
-              </div>
+        {/* SECTION : TA CIBLE */}
+        <div className="relative overflow-hidden bg-white border-[10px] border-slate-900 p-8 md:p-12 rounded-[4rem] shadow-[25px_25px_0px_0px_#dc2626]">
+          <p className="text-red-600 text-lg mb-2 flex items-center gap-2"><Gift size={20} /> TU ES LE PÈRE NOËL SECRET DE :</p>
+          <h2 className="text-7xl md:text-9xl mb-8 leading-none">{myTarget?.name || "???"}</h2>
+          
+          <div className="space-y-6">
+            {/* Ce que la cible a demandé (Vert) */}
+            <div className="bg-green-100 border-4 border-green-500 p-6 rounded-3xl transform rotate-1">
+              <p className="text-xs text-green-700 mb-2 flex items-center gap-2"><CheckCircle2 size={16} /> CE QU'IL/ELLE AIMERAIT RECEVOIR :</p>
+              <p className="text-2xl text-green-900">{targetData.mine.text || "Rien demandé pour l'instant..."}</p>
+              {targetData.mine.url && (
+                <a href={targetData.mine.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-green-700 bg-white px-4 py-2 rounded-xl mt-4 text-sm hover:bg-green-50 transition-colors border-2 border-green-200">
+                  <ExternalLink size={16} /> VOIR LE LIEN
+                </a>
+              )}
             </div>
-            <div className="space-y-4">
-              {mesGroupes.map((group) => (
-                <div key={group.id} onClick={() => { 
-                  setSelectedGroup(group); 
-                  const monP = group.participants?.find((p: any) => p.email === user?.email);
-                  const data = parseWishlist(monP?.wishlist || '');
-                  setWishlistText(data.text); setWishlistUrl(data.url);
-                  setStep('view'); 
-                }} className="bg-white p-6 rounded-3xl border-2 border-slate-200 flex justify-between items-center hover:border-red-500 transition-all cursor-pointer">
-                  <span>{group.name}</span>
-                  <button onClick={(e) => supprimerGroupe(group.id, e)} className="p-3 text-slate-300 hover:text-red-600 transition-all"><Trash2 size={20} /></button>
-                </div>
-              ))}
+
+            {/* Ce que le groupe prévoit (Noir) */}
+            <div className="bg-slate-900 text-white p-8 rounded-3xl transform -rotate-1">
+              <div className="flex justify-between items-center mb-4">
+                <p className="text-xs text-red-500 flex items-center gap-2"><Sparkles size={14} /> IDÉES SECRÈTES DU GROUPE (IL/ELLE NE LE VOIT PAS)</p>
+                {savingId === myTarget?.id && <Loader2 size={16} className="animate-spin text-red-500" />}
+              </div>
+              <textarea 
+                key={targetData.others} // Permet la mise à jour en temps réel
+                className="w-full bg-transparent border-none text-2xl p-0 focus:ring-0 resize-none placeholder:opacity-20 italic font-black"
+                rows={3}
+                placeholder="Discutez des idées de cadeaux ici..."
+                defaultValue={targetData.others}
+                onBlur={(e) => handleSaveOthers(myTarget.id, e.target.value, myTarget.wishlist)}
+              />
             </div>
           </div>
-        )}
+        </div>
 
-        {step === 'create' && (
-          <div className="bg-white rounded-[3rem] shadow-2xl p-10 border-4 border-slate-100 animate-in slide-in-from-bottom-4 duration-500">
-            <button onClick={() => setStep('home')} className="mb-8 text-slate-400 flex items-center gap-2 text-xs hover:text-red-500"><ArrowLeft size={16} /> Retour</button>
-            <h2 className="text-4xl mb-10 tracking-tighter">Configuration</h2>
-            <div className="space-y-8">
-              <div className="grid md:grid-cols-2 gap-6">
-                <input placeholder="Nom du groupe" className="w-full p-5 rounded-2xl border-2 border-slate-100 outline-none focus:border-red-500 bg-slate-50" value={groupName} onChange={(e) => setGroupName(e.target.value)} />
-                <input type="date" className="w-full p-5 rounded-2xl border-2 border-slate-100 outline-none focus:border-red-500 bg-slate-50" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
-              </div>
-              <div className="space-y-4">
-                {participants.map((p, index) => (
-                  <div key={p.id} className="p-6 rounded-3xl bg-slate-50 border-2 border-slate-100 flex flex-wrap gap-4 items-center">
-                    <span className="text-slate-200 w-6">{index + 1}</span>
-                    <input placeholder="Prénom" className="flex-1 min-w-[120px] p-3 rounded-xl bg-white outline-none focus:ring-2 ring-red-100" value={p.name} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, name: e.target.value} : item))} />
-                    <input placeholder="Email" className="flex-1 min-w-[150px] p-3 rounded-xl bg-white outline-none focus:ring-2 ring-red-100" value={p.email} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, email: e.target.value} : item))} />
-                    <select className="flex-1 min-w-[150px] p-3 rounded-xl bg-white outline-none text-red-500 border-none focus:ring-2 ring-red-100" value={p.exclude} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, exclude: e.target.value} : item))}>
-                        <option value="">Ne piochera pas...</option>
-                        {participants.filter(other => other.id !== p.id && other.name).map(other => (
-                            <option key={other.id} value={other.name}>{other.name}</option>
-                        ))}
-                    </select>
-                    {participants.length > 3 && <button onClick={() => setParticipants(participants.filter(item => item.id !== p.id))} className="text-slate-300 hover:text-red-500"><X size={18}/></button>}
+        {/* SECTION : TOUTES LES LISTES */}
+        <div className="space-y-8">
+          <div className="flex items-center gap-4">
+            <div className="h-[4px] flex-1 bg-slate-900"></div>
+            <h3 className="text-3xl">TOUTES LES LISTES</h3>
+            <div className="h-[4px] flex-1 bg-slate-900"></div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {groupParticipants.map((p) => {
+              const isMe = p.id === me.id;
+              const pData = parseWishlist(p.wishlist);
+              
+              return (
+                <div key={p.id} className={`relative p-8 rounded-[2.5rem] transition-all duration-300 ${isMe ? 'bg-green-500 text-white shadow-2xl scale-[1.02]' : 'bg-white border-4 border-slate-900 shadow-[10px_10px_0px_0px_rgba(0,0,0,1)]'}`}>
+                  
+                  <div className="flex justify-between items-start mb-6">
+                    <div>
+                      <span className={`text-[10px] px-3 py-1 rounded-full border-2 ${isMe ? 'bg-white text-green-600 border-white' : 'bg-slate-900 text-white border-slate-900'}`}>
+                        {isMe ? "MON ESPACE" : "PARTICIPANT"}
+                      </span>
+                      <h4 className="text-4xl mt-2 leading-none">{p.name}</h4>
+                    </div>
+                    {isMe ? <CheckCircle2 size={32} /> : <User size={32} className="opacity-10" />}
                   </div>
-                ))}
-              </div>
-              <button onClick={() => setParticipants([...participants, {id: Date.now(), name: '', email: '', exclude: ''}])} className="text-red-600 text-xs hover:underline">+ Ajouter un ami</button>
-              <button onClick={lancerLeTirage} disabled={loading || !groupName} className="w-full py-5 rounded-2xl text-xl bg-red-600 text-white shadow-xl hover:bg-red-700 disabled:bg-slate-100 transition-all italic font-black">
-                {loading ? <Loader2 className="animate-spin mx-auto" /> : "LANCER LE TIRAGE"}
-              </button>
-            </div>
-          </div>
-        )}
 
-        {step === 'view' && selectedGroup && (
-          <div className="bg-white rounded-[3rem] shadow-xl p-10 border-4 border-slate-100">
-            <button onClick={() => setStep('home')} className="flex items-center gap-2 text-slate-400 mb-8 text-xs hover:text-red-500"><ArrowLeft size={18}/> Retour</button>
-            <h2 className="text-4xl mb-10">{selectedGroup.name}</h2>
-            
-            <div className="mb-10 p-8 bg-slate-900 rounded-[2rem] text-white">
-              <h3 className="flex items-center gap-2 text-xs text-red-500 mb-4 font-black"><List size={16}/> MA WISHLIST</h3>
-              <div className="space-y-4">
-                <textarea className="w-full bg-slate-800 border-none rounded-xl p-4 text-white font-black italic outline-none focus:ring-2 ring-red-500" rows={2} placeholder="IDÉE DE CADEAU" value={wishlistText} onChange={(e) => setWishlistText(e.target.value)} />
-                <div className="relative">
-                  <LinkIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                  <input className="w-full bg-slate-800 border-none rounded-xl p-4 pl-12 text-blue-400 font-black italic outline-none focus:ring-2 ring-red-500" placeholder="LIEN VERS LE CADEAU (URL)" value={wishlistUrl} onChange={(e) => setWishlistUrl(e.target.value)} />
-                </div>
-              </div>
-              <button onClick={updateWishlist} className="mt-4 w-full py-3 bg-red-600 hover:bg-red-700 text-white font-black text-xs rounded-xl transition-all shadow-lg shadow-red-900/20">SAUVEGARDER MA LISTE</button>
-            </div>
-
-            <div className="space-y-4">
-              {selectedGroup.participants?.map((p: any) => {
-                const maCible = selectedGroup.participants.find((t: any) => t.id === p.target_id);
-                const isRevealed = revealedTargets[p.id];
-                const targetData = maCible ? parseWishlist(maCible.wishlist) : { text: '', url: '' };
-
-                return (
-                  <div key={p.id} className="p-6 rounded-3xl bg-slate-50 border-2 border-slate-100 flex flex-col gap-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xl italic">{p.name}</span>
-                      <button onClick={() => setRevealedTargets(prev => ({...prev, [p.id]: !prev[p.id]}))} className={`p-3 rounded-xl border-2 transition-all ${isRevealed ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-400 border-slate-200'}`}>
-                        {isRevealed ? <EyeOff size={20} /> : <Eye size={20} />}
+                  {isMe ? (
+                    /* MON ESPACE : Je modifie mes idées, je ne vois pas celles des autres */
+                    <div className="space-y-4">
+                      <div className="bg-green-600/50 p-5 rounded-2xl">
+                        <textarea 
+                          className="w-full bg-transparent border-none p-0 focus:ring-0 text-xl font-black italic resize-none placeholder:text-white/50 text-white"
+                          placeholder="QU'EST-CE QUI TE FERAIT PLAISIR ?" rows={2}
+                          value={myText} onChange={(e) => setMyText(e.target.value)}
+                        />
+                        <div className="flex items-center gap-2 mt-2 pt-2 border-t-2 border-green-400/30">
+                          <LinkIcon size={16} className="text-green-200" />
+                          <input 
+                            className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-sm font-black italic placeholder:text-green-200/50 text-white"
+                            placeholder="LIEN URL DU CADEAU (OPTIONNEL)"
+                            value={myUrl} onChange={(e) => setMyUrl(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <button onClick={handleSaveMine} className="w-full bg-white text-green-600 py-3 rounded-xl hover:bg-green-50 flex items-center justify-center gap-2">
+                        {savingId === me.id ? <Loader2 className="animate-spin" size={20} /> : "SAUVEGARDER MA LISTE"}
                       </button>
                     </div>
-                    {isRevealed && maCible && (
-                      <div className="p-5 bg-white rounded-2xl border-l-8 border-red-500 space-y-3">
-                        <p className="text-xs text-slate-400">PIOCKE : <span className="text-red-600">{maCible.name}</span></p>
-                        {targetData.text && <p className="text-slate-800 underline underline-offset-4">"{targetData.text}"</p>}
-                        {targetData.url && (
-                          <a href={targetData.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-blue-600 text-[10px] hover:scale-105 transition-transform origin-left">
-                            <ExternalLink size={14} /> CLIQUE ICI POUR VOIR LE CADEAU
-                          </a>
+                  ) : (
+                    /* L'ESPACE DES AUTRES : Je vois leurs idées en vert, j'édite les idées du groupe */
+                    <div className="space-y-4">
+                      <div className="bg-green-50 border-2 border-green-200 p-4 rounded-2xl">
+                        <p className="text-[10px] text-green-600 mb-1">SES PROPRES IDÉES :</p>
+                        <p className="text-lg text-green-900">{pData.mine.text || "Rien demandé..."}</p>
+                        {pData.mine.url && (
+                          <a href={pData.mine.url} target="_blank" className="text-green-600 text-[10px] flex items-center gap-1 mt-2 hover:underline"><ExternalLink size={12}/> Lien joint</a>
                         )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
-        {step === 'success' && (
-          <div className="bg-white p-20 rounded-[4rem] shadow-2xl text-center">
-            <CheckCircle2 className="mx-auto mb-10 text-green-500" size={80} />
-            <h2 className="text-4xl mb-10">C'EST ENVOYÉ ! 🎅</h2>
-            <button onClick={() => setStep('home')} className="bg-slate-900 text-white px-12 py-5 rounded-2xl hover:bg-red-600 transition-all shadow-xl font-black">RETOUR</button>
+                      <div className="bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl">
+                        <div className="flex justify-between items-center mb-2">
+                          <p className="text-[10px] text-slate-400 flex items-center gap-1"><MessageSquare size={12} /> IDÉES SOUFFLÉES :</p>
+                          {savingId === p.id && <Loader2 size={12} className="animate-spin text-slate-400" />}
+                        </div>
+                        <textarea 
+                          key={pData.others}
+                          className="w-full bg-transparent border-none p-0 focus:ring-0 text-lg font-black italic resize-none placeholder:text-slate-300 text-slate-800"
+                          placeholder="Ajoute une idée ici..." rows={2}
+                          defaultValue={pData.others}
+                          onBlur={(e) => handleSaveOthers(p.id, e.target.value, p.wishlist)}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        )}
-      </main>
+        </div>
+      </div>
     </div>
   );
 }

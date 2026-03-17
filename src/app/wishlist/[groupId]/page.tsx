@@ -3,6 +3,17 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, MessageSquare } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
+// Fonction pour séparer "Mes idées" (avec URL) et "Les idées du groupe"
+const parseWishlist = (raw: string) => {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.mine !== undefined) return parsed;
+    return { mine: { text: parsed.text || '', url: parsed.url || '' }, others: '' };
+  } catch {
+    return { mine: { text: raw || '', url: '' }, others: '' };
+  }
+};
+
 export default function WishlistPage({ params }: { params: { groupId: string } }) {
   const [me, setMe] = useState<any>(null);
   const [groupParticipants, setGroupParticipants] = useState<any[]>([]);
@@ -10,56 +21,42 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [savingId, setSavingId] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
 
-// 1. CHARGEMENT INITIAL (LA MÉTHODE BLINDÉE)
-const loadData = useCallback(async () => {
-  const urlParams = new URLSearchParams(window.location.search);
-  const myId = urlParams.get('p');
+  // États locaux pour TES idées
+  const [myText, setMyText] = useState("");
+  const [myUrl, setMyUrl] = useState("");
 
-  if (!myId) {
-    setLoading(false);
-    return;
-  }
+  const loadData = useCallback(async () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const myId = urlParams.get('p');
 
-  // ÉTAPE A : On va te chercher TOI en premier (comme dans la version qui marchait)
-  const { data: myData, error: meError } = await supabase
-    .from('participants')
-    .select('*, groups(name)')
-    .eq('id', myId)
-    .single();
-
-  if (myData) {
-    setMe(myData);
-    setGroupName(myData.groups?.name || "Mon Groupe");
-
-    // ÉTAPE B : Maintenant qu'on a ton profil, on récupère le reste de ton groupe
-    const { data: groupData } = await supabase
-      .from('participants')
-      .select('*')
-      .eq('group_id', myData.group_id)
-      .order('name', { ascending: true });
-
-    if (groupData) {
-      setGroupParticipants(groupData);
+    if (!myId) {
+      setLoading(false);
+      return;
     }
-  } else {
-    console.error("Erreur de chargement profil:", meError);
-  }
-  
-  setLoading(false);
-}, [params.groupId]);
+
+    const { data: myData } = await supabase.from('participants').select('*, groups(name)').eq('id', myId).single();
+
+    if (myData) {
+      setMe(myData);
+      setGroupName(myData.groups?.name || "Mon Groupe");
+      
+      const myParsed = parseWishlist(myData.wishlist);
+      setMyText(myParsed.mine.text);
+      setMyUrl(myParsed.mine.url);
+
+      const { data: groupData } = await supabase.from('participants').select('*').eq('group_id', myData.group_id).order('name', { ascending: true });
+      if (groupData) setGroupParticipants(groupData);
+    }
+    setLoading(false);
+  }, [params.groupId]);
 
   useEffect(() => {
     loadData();
 
-    // 2. REALTIME : MISE À JOUR EN DIRECT QUAND QUELQU'UN CHANGE SA LISTE
+    // TEMPS RÉEL
     const channel = supabase
       .channel(`group-${params.groupId}`)
-      .on('postgres_changes', { 
-        event: 'UPDATE', 
-        schema: 'public', 
-        table: 'participants',
-        filter: `group_id=eq.${params.groupId}` 
-      }, 
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'participants', filter: `group_id=eq.${params.groupId}` }, 
       (payload) => {
         setGroupParticipants(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p));
       })
@@ -68,145 +65,154 @@ const loadData = useCallback(async () => {
     return () => { supabase.removeChannel(channel); };
   }, [params.groupId, loadData]);
 
-  // 3. FONCTION DE MISE À JOUR (POUR SOI OU POUR LES AUTRES)
-  const handleUpdateWishlist = async (id: string, newContent: string) => {
-    setSavingId(id);
-    const { error } = await supabase
-      .from('participants')
-      .update({ wishlist: newContent })
-      .eq('id', id);
+  // SAUVEGARDER MES PROPRES IDÉES
+  const handleSaveMine = async () => {
+    setSavingId(me.id);
+    const data = parseWishlist(me.wishlist);
+    data.mine = { text: myText, url: myUrl };
+    await supabase.from('participants').update({ wishlist: JSON.stringify(data) }).eq('id', me.id);
     
-    if (error) console.error("Erreur update:", error);
+    setMe({ ...me, wishlist: JSON.stringify(data) });
     setSavingId(null);
   };
 
-  if (loading) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 font-black italic uppercase italic">
-      <Loader2 className="animate-spin text-red-600 mb-4" size={40} />
-      <p>Synchronisation avec le Pôle Nord...</p>
-    </div>
-  );
+  // SAUVEGARDER LES IDÉES SOUFFLÉES POUR LES AUTRES
+  const handleSaveOthers = async (id: string, othersText: string, currentRaw: string) => {
+    setSavingId(id);
+    const data = parseWishlist(currentRaw);
+    data.others = othersText;
+    await supabase.from('participants').update({ wishlist: JSON.stringify(data) }).eq('id', id);
+    setSavingId(null);
+  };
 
-  if (!me) return (
-    <div className="min-h-screen flex items-center justify-center p-10">
-      <div className="max-w-md w-full border-8 border-red-600 p-10 text-center space-y-4">
-        <h1 className="text-4xl font-black italic uppercase">Accès Refusé</h1>
-        <p className="font-bold opacity-60 italic">Ton lien magique semble expiré ou corrompu.</p>
-      </div>
-    </div>
-  );
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 italic font-black uppercase"><Loader2 className="animate-spin text-red-600 mr-2" /> Chargement...</div>;
+  if (!me) return <div className="p-20 text-center font-black uppercase italic text-red-600">Accès Refusé</div>;
 
   const myTarget = groupParticipants.find(p => p.id === me.target_id);
+  const targetData = myTarget ? parseWishlist(myTarget.wishlist) : { mine: { text: '', url: '' }, others: '' };
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-10 font-black italic uppercase tracking-tighter text-slate-900">
       <div className="max-w-4xl mx-auto space-y-12">
         
-        {/* HEADER DYNAMIQUE */}
         <div className="flex flex-col items-center text-center space-y-4">
-          <div className="bg-red-600 text-white px-6 py-2 rounded-full text-xl shadow-lg animate-bounce">
-             {groupName} 🎄
-          </div>
-          <h1 className="text-5xl md:text-8xl leading-none tracking-tight">Espace de <span className="text-red-600 underline decoration-8 underline-offset-8">{me.name}</span></h1>
+          <div className="bg-red-600 text-white px-6 py-2 rounded-full text-xl shadow-lg">{groupName} 🎄</div>
+          <h1 className="text-5xl md:text-8xl leading-none">Espace de <span className="text-red-600 underline decoration-8 underline-offset-8">{me.name}</span></h1>
         </div>
 
-        {/* SECTION FOCUS : TA CIBLE SECRET SANTA */}
+        {/* SECTION : TA CIBLE */}
         <div className="relative overflow-hidden bg-white border-[10px] border-slate-900 p-8 md:p-12 rounded-[4rem] shadow-[25px_25px_0px_0px_#dc2626]">
-            <div className="absolute top-0 right-0 bg-red-600 text-white px-8 py-2 -rotate-2 origin-top-right text-xs">
-                CONFIDENTIEL
-            </div>
-          <p className="text-red-600 text-lg mb-2 flex items-center gap-2">
-            <Gift size={20} /> TU ES LE PÈRE NOËL SECRET DE :
-          </p>
-          <h2 className="text-7xl md:text-9xl mb-8 leading-none break-words">
-            {myTarget?.name || "???"}
-          </h2>
+          <p className="text-red-600 text-lg mb-2 flex items-center gap-2"><Gift size={20} /> TU ES LE PÈRE NOËL SECRET DE :</p>
+          <h2 className="text-7xl md:text-9xl mb-8 leading-none">{myTarget?.name || "???"}</h2>
           
-          <div className="bg-slate-900 text-white p-8 rounded-3xl transform -rotate-1">
-            <div className="flex justify-between items-center mb-4">
-                <p className="text-xs text-red-500 flex items-center gap-2">
-                    <Sparkles size={14} /> SES ENVIES ACTUELLES
-                </p>
-                {savingId === myTarget?.id && <Loader2 size={16} className="animate-spin" />}
+          <div className="space-y-6">
+            {/* Ce que la cible a demandé (Vert) */}
+            <div className="bg-green-100 border-4 border-green-500 p-6 rounded-3xl transform rotate-1">
+              <p className="text-xs text-green-700 mb-2 flex items-center gap-2"><CheckCircle2 size={16} /> CE QU'IL/ELLE AIMERAIT RECEVOIR :</p>
+              <p className="text-2xl text-green-900">{targetData.mine.text || "Rien demandé pour l'instant..."}</p>
+              {targetData.mine.url && (
+                <a href={targetData.mine.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-green-700 bg-white px-4 py-2 rounded-xl mt-4 text-sm hover:bg-green-50 transition-colors border-2 border-green-200">
+                  <ExternalLink size={16} /> VOIR LE LIEN
+                </a>
+              )}
             </div>
-            <textarea 
-              className="w-full bg-transparent border-none text-2xl md:text-3xl p-0 focus:ring-0 resize-none placeholder:opacity-20 italic font-black"
-              rows={3}
-              placeholder="Cette personne n'a rien écrit... Aide-la en notant des idées ici !"
-              defaultValue={myTarget?.wishlist || ""}
-              onBlur={(e) => handleUpdateWishlist(myTarget.id, e.target.value)}
-            />
-            <p className="text-[10px] mt-4 opacity-40 italic">Note : Ce que tu écris ici sera visible par tout le monde, sauf par {myTarget?.name}.</p>
+
+            {/* Ce que le groupe prévoit (Noir) */}
+            <div className="bg-slate-900 text-white p-8 rounded-3xl transform -rotate-1">
+              <div className="flex justify-between items-center mb-4">
+                <p className="text-xs text-red-500 flex items-center gap-2"><Sparkles size={14} /> IDÉES SECRÈTES DU GROUPE (IL/ELLE NE LE VOIT PAS)</p>
+                {savingId === myTarget?.id && <Loader2 size={16} className="animate-spin text-red-500" />}
+              </div>
+              <textarea 
+                key={targetData.others} // Permet la mise à jour en temps réel
+                className="w-full bg-transparent border-none text-2xl p-0 focus:ring-0 resize-none placeholder:opacity-20 italic font-black"
+                rows={3}
+                placeholder="Discutez des idées de cadeaux ici..."
+                defaultValue={targetData.others}
+                onBlur={(e) => handleSaveOthers(myTarget.id, e.target.value, myTarget.wishlist)}
+              />
+            </div>
           </div>
         </div>
 
-        {/* SECTION : TABLEAU COLLABORATIF DE TOUTES LES LISTES */}
+        {/* SECTION : TOUTES LES LISTES */}
         <div className="space-y-8">
           <div className="flex items-center gap-4">
             <div className="h-[4px] flex-1 bg-slate-900"></div>
-            <h3 className="text-3xl whitespace-nowrap">TOUTES LES LISTES</h3>
+            <h3 className="text-3xl">TOUTES LES LISTES</h3>
             <div className="h-[4px] flex-1 bg-slate-900"></div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {groupParticipants.map((p) => {
               const isMe = p.id === me.id;
-              const isTarget = p.id === me.target_id;
+              const pData = parseWishlist(p.wishlist);
               
               return (
-                <div 
-                  key={p.id} 
-                  className={`group relative p-8 rounded-[2.5rem] transition-all duration-300 transform hover:-translate-y-2
-                    ${isMe 
-                      ? 'bg-green-500 text-white ring-[12px] ring-green-100 shadow-2xl' 
-                      : 'bg-white border-4 border-slate-900 shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] hover:shadow-[15px_15px_0px_0px_rgba(0,0,0,1)]'
-                    }`}
-                >
+                <div key={p.id} className={`relative p-8 rounded-[2.5rem] transition-all duration-300 ${isMe ? 'bg-green-500 text-white shadow-2xl scale-[1.02]' : 'bg-white border-4 border-slate-900 shadow-[10px_10px_0px_0px_rgba(0,0,0,1)]'}`}>
+                  
                   <div className="flex justify-between items-start mb-6">
                     <div>
-                        <span className={`text-xs px-3 py-1 rounded-full border-2 ${isMe ? 'bg-white text-green-600 border-white' : 'bg-slate-900 text-white border-slate-900'}`}>
-                            {isMe ? "MA LISTE" : "PARTICIPANT"}
-                        </span>
-                        <h4 className="text-4xl mt-2 leading-none">{p.name}</h4>
+                      <span className={`text-[10px] px-3 py-1 rounded-full border-2 ${isMe ? 'bg-white text-green-600 border-white' : 'bg-slate-900 text-white border-slate-900'}`}>
+                        {isMe ? "MON ESPACE" : "PARTICIPANT"}
+                      </span>
+                      <h4 className="text-4xl mt-2 leading-none">{p.name}</h4>
                     </div>
-                    {isMe ? <CheckCircle2 size={32} /> : (isTarget ? <Gift className="text-red-600" size={32} /> : <User size={32} className="opacity-10" />)}
+                    {isMe ? <CheckCircle2 size={32} /> : <User size={32} className="opacity-10" />}
                   </div>
 
-                  <div className={`p-5 rounded-2xl ${isMe ? 'bg-green-600/50' : 'bg-slate-50 border-2 border-slate-100'}`}>
-                    <div className="flex justify-between items-center mb-2">
-                        <MessageSquare size={14} className="opacity-30" />
-                        {savingId === p.id && <Loader2 size={14} className="animate-spin" />}
+                  {isMe ? (
+                    /* MON ESPACE : Je modifie mes idées, je ne vois pas celles des autres */
+                    <div className="space-y-4">
+                      <div className="bg-green-600/50 p-5 rounded-2xl">
+                        <textarea 
+                          className="w-full bg-transparent border-none p-0 focus:ring-0 text-xl font-black italic resize-none placeholder:text-white/50 text-white"
+                          placeholder="QU'EST-CE QUI TE FERAIT PLAISIR ?" rows={2}
+                          value={myText} onChange={(e) => setMyText(e.target.value)}
+                        />
+                        <div className="flex items-center gap-2 mt-2 pt-2 border-t-2 border-green-400/30">
+                          <LinkIcon size={16} className="text-green-200" />
+                          <input 
+                            className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-sm font-black italic placeholder:text-green-200/50 text-white"
+                            placeholder="LIEN URL DU CADEAU (OPTIONNEL)"
+                            value={myUrl} onChange={(e) => setMyUrl(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <button onClick={handleSaveMine} className="w-full bg-white text-green-600 py-3 rounded-xl hover:bg-green-50 flex items-center justify-center gap-2">
+                        {savingId === me.id ? <Loader2 className="animate-spin" size={20} /> : "SAUVEGARDER MA LISTE"}
+                      </button>
                     </div>
-                    <textarea 
-                      className={`w-full bg-transparent border-none p-0 focus:ring-0 text-xl font-black italic resize-none
-                        ${isMe ? 'placeholder:text-white/50 text-white' : 'placeholder:text-slate-300 text-slate-800'}`}
-                      placeholder={isMe ? "QU'EST-CE QUI TE FERAIT PLAISIR ?" : "AJOUTE UNE IDÉE POUR LUI..."}
-                      rows={2}
-                      defaultValue={p.wishlist || ""}
-                      onBlur={(e) => handleUpdateWishlist(p.id, e.target.value)}
-                    />
-                  </div>
-                  
-                  {isMe && (
-                    <p className="text-[10px] mt-4 font-bold text-green-100 flex items-center gap-1 italic">
-                        <Sparkles size={10} /> Tes amis verront tes idées ici !
-                    </p>
+                  ) : (
+                    /* L'ESPACE DES AUTRES : Je vois leurs idées en vert, j'édite les idées du groupe */
+                    <div className="space-y-4">
+                      <div className="bg-green-50 border-2 border-green-200 p-4 rounded-2xl">
+                        <p className="text-[10px] text-green-600 mb-1">SES PROPRES IDÉES :</p>
+                        <p className="text-lg text-green-900">{pData.mine.text || "Rien demandé..."}</p>
+                        {pData.mine.url && (
+                          <a href={pData.mine.url} target="_blank" className="text-green-600 text-[10px] flex items-center gap-1 mt-2 hover:underline"><ExternalLink size={12}/> Lien joint</a>
+                        )}
+                      </div>
+
+                      <div className="bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl">
+                        <div className="flex justify-between items-center mb-2">
+                          <p className="text-[10px] text-slate-400 flex items-center gap-1"><MessageSquare size={12} /> IDÉES SOUFFLÉES :</p>
+                          {savingId === p.id && <Loader2 size={12} className="animate-spin text-slate-400" />}
+                        </div>
+                        <textarea 
+                          key={pData.others}
+                          className="w-full bg-transparent border-none p-0 focus:ring-0 text-lg font-black italic resize-none placeholder:text-slate-300 text-slate-800"
+                          placeholder="Ajoute une idée ici..." rows={2}
+                          defaultValue={pData.others}
+                          onBlur={(e) => handleSaveOthers(p.id, e.target.value, p.wishlist)}
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
               );
             })}
           </div>
-        </div>
-
-        {/* FOOTER */}
-        <div className="pt-20 pb-10 text-center">
-            <div className="inline-flex items-center gap-4 text-xs opacity-30 border-t-2 border-slate-900/10 pt-8 w-full justify-center">
-                <span>FOUNSELYS.COM</span>
-                <span className="h-1 w-1 bg-slate-900 rounded-full"></span>
-                <span>SECRET SANTA ENGINE v3.0</span>
-                <span className="h-1 w-1 bg-slate-900 rounded-full"></span>
-                <span>2024-2025</span>
-            </div>
         </div>
       </div>
     </div>
