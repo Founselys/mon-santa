@@ -10,32 +10,43 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [savingId, setSavingId] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
 
-  // 1. CHARGEMENT INITIAL DES DONNÉES
-  const loadData = useCallback(async () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const myId = urlParams.get('p');
+// 1. CHARGEMENT INITIAL (LA MÉTHODE BLINDÉE)
+const loadData = useCallback(async () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const myId = urlParams.get('p');
 
-    if (!myId) {
-      setLoading(false);
-      return;
-    }
+  if (!myId) {
+    setLoading(false);
+    return;
+  }
 
-    // On récupère TOUS les participants du groupe pour la vue collaborative
-    const { data: participants, error } = await supabase
+  // ÉTAPE A : On va te chercher TOI en premier (comme dans la version qui marchait)
+  const { data: myData, error: meError } = await supabase
+    .from('participants')
+    .select('*, groups(name)')
+    .eq('id', myId)
+    .single();
+
+  if (myData) {
+    setMe(myData);
+    setGroupName(myData.groups?.name || "Mon Groupe");
+
+    // ÉTAPE B : Maintenant qu'on a ton profil, on récupère le reste de ton groupe
+    const { data: groupData } = await supabase
       .from('participants')
-      .select('*, groups(name)')
-      .eq('group_id', params.groupId)
+      .select('*')
+      .eq('group_id', myData.group_id)
       .order('name', { ascending: true });
 
-    if (participants && participants.length > 0) {
-      setGroupParticipants(participants);
-      setGroupName(participants[0].groups.name);
-      
-      const myInfo = participants.find(p => String(p.id) === String(myId));
-      setMe(myInfo);
+    if (groupData) {
+      setGroupParticipants(groupData);
     }
-    setLoading(false);
-  }, [params.groupId]);
+  } else {
+    console.error("Erreur de chargement profil:", meError);
+  }
+  
+  setLoading(false);
+}, [params.groupId]);
 
   useEffect(() => {
     loadData();
