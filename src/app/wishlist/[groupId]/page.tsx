@@ -1,22 +1,32 @@
 "use client";
 import React, { useState, useEffect, useCallback } from 'react';
-import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, MessageSquare, Lock } from 'lucide-react';
+import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, Lock, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
-// Fonction de parsing sécurisée
+// NOUVEAU PARSER : Ultra robuste, il transforme tout en "Liste de bulles"
 const parseWishlist = (raw: any) => {
-  if (!raw) return { mine: { text: '', url: '' }, others: '' };
+  const defaultData = { mine: [], others: [] };
+  if (!raw) return defaultData;
+  
   try {
-    const parsed = typeof raw === 'object' ? raw : JSON.parse(raw);
-    return { 
-      mine: { 
-        text: parsed?.mine?.text || parsed?.text || '', 
-        url: parsed?.mine?.url || parsed?.url || '' 
-      }, 
-      others: parsed?.others || '' 
-    };
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    let mine = Array.isArray(parsed?.mine) ? parsed.mine : [];
+    let others = Array.isArray(parsed?.others) ? parsed.others : [];
+
+    // Récupération des anciennes données (Migration automatique)
+    if (parsed?.mine && !Array.isArray(parsed.mine) && parsed.mine.text) {
+      mine.push({ id: Date.now().toString(), text: parsed.mine.text, url: parsed.mine.url });
+    }
+    if (typeof parsed?.others === 'string' && parsed.others.trim() !== '') {
+      others.push({ id: Date.now().toString() + 'o', text: parsed.others, authorName: 'Le groupe' });
+    }
+    return { mine, others };
   } catch {
-    return { mine: { text: String(raw), url: '' }, others: '' };
+    // Si c'était du texte tout simple de la V1
+    if (typeof raw === 'string' && raw.trim() !== '') {
+        return { mine: [{ id: Date.now().toString(), text: raw, url: '' }], others: [] };
+    }
+    return defaultData;
   }
 };
 
@@ -28,11 +38,12 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [groupName, setGroupName] = useState("");
   const [dbError, setDbError] = useState("");
 
-  // Le participant actuellement sélectionné pour l'affichage à droite
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
-  const [myText, setMyText] = useState("");
-  const [myUrl, setMyUrl] = useState("");
+  // Champs pour les nouvelles idées
+  const [newMyText, setNewMyText] = useState("");
+  const [newMyUrl, setNewMyUrl] = useState("");
+  const [newOtherText, setNewOtherText] = useState("");
 
   const loadData = useCallback(async () => {
     try {
@@ -51,12 +62,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
       if (myData) {
         setMe(myData);
         setGroupName(myData.groups?.name || "Mon Groupe");
-        
-        const myParsed = parseWishlist(myData.wishlist);
-        setMyText(myParsed.mine.text);
-        setMyUrl(myParsed.mine.url);
-
-        // On sélectionne automatiquement sa cible au chargement
         setSelectedUserId(myData.target_id);
 
         const { data: groupData } = await supabase.from('participants').select('*').eq('group_id', myData.group_id).order('name', { ascending: true });
@@ -71,6 +76,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   useEffect(() => {
     loadData();
 
+    // TEMPS RÉEL
     const channel = supabase.channel(`group-${params.groupId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'participants', filter: `group_id=eq.${params.groupId}` }, 
       (payload) => {
@@ -80,21 +86,48 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     return () => { supabase.removeChannel(channel); };
   }, [params.groupId, loadData]);
 
-  const handleSaveMine = async () => {
-    setSavingId(me.id);
-    const data = parseWishlist(me.wishlist);
-    data.mine = { text: myText, url: myUrl };
-    await supabase.from('participants').update({ wishlist: JSON.stringify(data) }).eq('id', me.id);
-    setMe({ ...me, wishlist: JSON.stringify(data) });
+  // SAUVEGARDE GLOBALE : On enregistre le JSON complet pour la personne ciblée
+  const saveToDb = async (userId: string, dataObj: any) => {
+    setSavingId(userId);
+    const jsonStr = JSON.stringify(dataObj);
+    
+    await supabase.from('participants').update({ wishlist: jsonStr }).eq('id', userId);
+    
+    // Mise à jour locale immédiate pour que ce soit fluide
+    setGroupParticipants(prev => prev.map(p => p.id === userId ? { ...p, wishlist: jsonStr } : p));
+    if (userId === me.id) setMe({ ...me, wishlist: jsonStr });
+    
     setSavingId(null);
   };
 
-  const handleSaveOthers = async (id: string, othersText: string, currentRaw: any) => {
-    setSavingId(id);
-    const data = parseWishlist(currentRaw);
-    data.others = othersText;
-    await supabase.from('participants').update({ wishlist: JSON.stringify(data) }).eq('id', id);
-    setSavingId(null);
+  // ACTIONS POUR MES IDÉES (BULLES VERTES)
+  const addMyIdea = () => {
+    if (!newMyText.trim()) return;
+    const currentData = parseWishlist(me.wishlist);
+    currentData.mine.push({ id: Date.now().toString(), text: newMyText, url: newMyUrl });
+    saveToDb(me.id, currentData);
+    setNewMyText(""); setNewMyUrl("");
+  };
+
+  const deleteMyIdea = (ideaId: string) => {
+    const currentData = parseWishlist(me.wishlist);
+    currentData.mine = currentData.mine.filter((idea: any) => idea.id !== ideaId);
+    saveToDb(me.id, currentData);
+  };
+
+  // ACTIONS POUR LES IDÉES DU GROUPE (BULLES NOIRES)
+  const addOtherIdea = (targetId: string, currentWishlist: any) => {
+    if (!newOtherText.trim()) return;
+    const currentData = parseWishlist(currentWishlist);
+    currentData.others.push({ id: Date.now().toString(), text: newOtherText, authorName: me.name });
+    saveToDb(targetId, currentData);
+    setNewOtherText("");
+  };
+
+  const deleteOtherIdea = (targetId: string, ideaId: string, currentWishlist: any) => {
+    const currentData = parseWishlist(currentWishlist);
+    currentData.others = currentData.others.filter((idea: any) => idea.id !== ideaId);
+    saveToDb(targetId, currentData);
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 italic font-black uppercase"><Loader2 className="animate-spin text-red-600 mr-2" /> Chargement...</div>;
@@ -118,13 +151,12 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
           <p className="text-xs opacity-50 max-w-xs text-right hidden md:block">CLIQUE SUR UN PARTICIPANT POUR VOIR SA LISTE OU LUI SOUFFLER DES IDÉES.</p>
         </div>
 
-        {/* LAYOUT PRINCIPAL : LISTE A GAUCHE, DETAIL A DROITE */}
+        {/* LAYOUT PRINCIPAL */}
         <div className="flex flex-col md:flex-row gap-8">
           
-          {/* COLONNE GAUCHE : LISTE DES PARTICIPANTS */}
+          {/* COLONNE GAUCHE : LISTE */}
           <div className="w-full md:w-1/3 flex flex-col gap-4">
             <h2 className="text-xl flex items-center gap-2"><User size={20}/> PARTICIPANTS</h2>
-            
             <div className="flex flex-col gap-3">
               {groupParticipants.map((p) => {
                 const isSelected = p.id === selectedUserId;
@@ -132,9 +164,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                 const isMe = p.id === me.id;
 
                 return (
-                  <div 
-                    key={p.id}
-                    onClick={() => setSelectedUserId(p.id)}
+                  <div key={p.id} onClick={() => setSelectedUserId(p.id)}
                     className={`cursor-pointer p-5 rounded-3xl border-4 transition-all flex justify-between items-center
                       ${isSelected ? 'border-slate-900 bg-slate-900 text-white shadow-[8px_8px_0px_0px_rgba(220,38,38,1)] translate-x-2' : 'border-slate-900 bg-white hover:bg-slate-100 hover:translate-x-1 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]'}
                     `}
@@ -150,90 +180,117 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
             </div>
           </div>
 
-          {/* COLONNE DROITE : LE DETAIL DU PARTICIPANT SELECTIONNE */}
+          {/* COLONNE DROITE : DETAIL DU PARTICIPANT */}
           <div className="w-full md:w-2/3">
-            <div className="bg-white border-4 border-slate-900 rounded-[3rem] p-8 md:p-12 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] relative overflow-hidden">
+            <div className="bg-white border-4 border-slate-900 rounded-[3rem] p-6 md:p-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] relative overflow-hidden">
               
-              {/* Badge Cible en haut à droite si c'est notre pioche */}
               {selectedUser.id === me.target_id && (
                 <div className="absolute top-0 right-0 bg-red-600 text-white px-8 py-2 -rotate-2 origin-top-right text-xs shadow-md">
                   C'EST TA PIOCHE !
                 </div>
               )}
 
-              <h2 className="text-6xl md:text-8xl mb-8 break-words">{selectedUser.name}</h2>
+              <h2 className="text-5xl md:text-7xl mb-8 break-words">{selectedUser.name}</h2>
 
-              <div className="space-y-6">
+              <div className="space-y-8">
                 
-                {/* BULLE VERTE : CE QUE LA PERSONNE A DEMANDE (Ses propres idées) */}
+                {/* ZONE 1 : BULLES VERTES (Ses idées) */}
                 <div className="bg-green-50 border-4 border-green-500 rounded-3xl p-6 relative">
-                  <p className="text-xs text-green-700 mb-4 flex items-center gap-2">
+                  <p className="text-xs text-green-700 mb-6 flex items-center gap-2">
                     <CheckCircle2 size={16} /> 
-                    {isLookingAtMyself ? "CE QUE JE VEUX POUR NOËL :" : `IDÉE PROPOSÉE PAR ${selectedUser.name} :`}
+                    {isLookingAtMyself ? "MA WISHLIST PERSONNELLE :" : `LES ENVIES DE ${selectedUser.name} :`}
                   </p>
                   
-                  {isLookingAtMyself ? (
-                    // MODE EDITION (Moi)
-                    <div className="space-y-4">
-                      <textarea 
-                        className="w-full bg-transparent border-none p-0 focus:ring-0 text-2xl md:text-3xl text-green-900 font-black italic resize-none placeholder:text-green-300"
-                        placeholder="Qu'est-ce qui te ferait plaisir ?" rows={2}
-                        value={myText} onChange={(e) => setMyText(e.target.value)}
-                      />
-                      <div className="flex items-center gap-2 border-t-2 border-green-200 pt-4">
-                        <LinkIcon size={20} className="text-green-600" />
-                        <input 
-                          className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-sm text-green-800 font-black italic placeholder:text-green-300"
-                          placeholder="Lien vers le cadeau (Optionnel)"
-                          value={myUrl} onChange={(e) => setMyUrl(e.target.value)}
-                        />
+                  {/* Liste des bulles vertes */}
+                  <div className="space-y-3 mb-6">
+                    {selectedData.mine.length === 0 && <p className="opacity-40 text-lg text-green-800">Aucune idée pour l'instant...</p>}
+                    {selectedData.mine.map((idea: any) => (
+                      <div key={idea.id} className="bg-green-400 text-green-950 border-2 border-green-600 p-4 rounded-2xl shadow-[4px_4px_0px_0px_#166534] flex justify-between items-start gap-4">
+                        <div>
+                          <p className="text-xl leading-tight">{idea.text}</p>
+                          {idea.url && (
+                            <a href={idea.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-green-800 bg-green-300 px-3 py-1 rounded-lg mt-2 text-[10px] hover:bg-green-200 transition-colors">
+                              <ExternalLink size={12} /> VOIR LE LIEN
+                            </a>
+                          )}
+                        </div>
+                        {isLookingAtMyself && (
+                          <button onClick={() => deleteMyIdea(idea.id)} className="text-green-700 hover:text-red-600 transition-colors p-1"><Trash2 size={18} /></button>
+                        )}
                       </div>
-                      <button onClick={handleSaveMine} className="w-full md:w-auto px-6 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 flex items-center justify-center gap-2 transition-colors">
-                        {savingId === me.id ? <Loader2 className="animate-spin" size={18} /> : "ENREGISTRER"}
-                      </button>
-                    </div>
-                  ) : (
-                    // MODE LECTURE (Quelqu'un d'autre)
-                    <div>
-                      <p className="text-2xl md:text-3xl text-green-900 leading-tight">
-                        {selectedData.mine.text || <span className="opacity-40 text-lg">N'a rien demandé...</span>}
-                      </p>
-                      {selectedData.mine.url && (
-                        <a href={selectedData.mine.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-green-200 text-green-900 px-4 py-2 rounded-xl mt-4 text-xs hover:bg-green-300 transition-colors border-2 border-green-400">
-                          <ExternalLink size={14} /> VOIR LE CADEAU
-                        </a>
-                      )}
+                    ))}
+                  </div>
+
+                  {/* Ajouter une idée (Uniquement si c'est moi) */}
+                  {isLookingAtMyself && (
+                    <div className="bg-white p-4 rounded-2xl border-2 border-green-200">
+                      <input 
+                        className="w-full bg-transparent border-none p-0 mb-2 focus:ring-0 text-lg text-green-900 font-black italic placeholder:text-green-300"
+                        placeholder="Qu'est-ce qui te ferait plaisir ?" 
+                        value={newMyText} onChange={(e) => setNewMyText(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && addMyIdea()}
+                      />
+                      <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 border-t-2 border-green-100 pt-2">
+                        <LinkIcon size={16} className="text-green-500 hidden md:block" />
+                        <input 
+                          className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-xs text-green-800 font-black italic placeholder:text-green-300"
+                          placeholder="Lien URL (Optionnel)"
+                          value={newMyUrl} onChange={(e) => setNewMyUrl(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addMyIdea()}
+                        />
+                        <button onClick={addMyIdea} disabled={savingId === me.id} className="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 flex items-center justify-center gap-2 text-xs">
+                           {savingId === me.id ? <Loader2 className="animate-spin" size={14} /> : <><Plus size={14}/> AJOUTER</>}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* BULLE NOIRE : LES IDEES DU GROUPE */}
+                {/* ZONE 2 : BULLES NOIRES (Idées du groupe) */}
                 <div className="bg-slate-900 text-white border-4 border-slate-900 rounded-3xl p-6 relative transform rotate-1">
                   
                   {isLookingAtMyself ? (
-                    // C'est ma propre page, je n'ai pas le droit de lire ça !
+                    // C'est moi : ESPACE SECRET
                     <div className="text-center py-8 opacity-80 space-y-4">
                       <Lock className="mx-auto text-red-500 mb-2" size={40} />
                       <p className="text-xl text-slate-300">ESPACE SECRET</p>
-                      <p className="text-xs text-slate-500">LES IDÉES QUE LE GROUPE TE PRÉPARE SONT CACHÉES ICI...<br/>ON GARDE LA SURPRISE ! 🤫</p>
+                      <p className="text-xs text-slate-500">LES IDÉES QUE LE GROUPE TE PRÉPARE SONT CACHÉES ICI.<br/>ON GARDE LA SURPRISE ! 🤫</p>
                     </div>
                   ) : (
-                    // C'est quelqu'un d'autre, on peut discuter et ajouter des idées
+                    // C'est un autre : ZONE DE DISCUSSION
                     <div>
-                      <div className="flex justify-between items-center mb-4">
+                      <div className="flex justify-between items-center mb-6">
                         <p className="text-xs text-red-500 flex items-center gap-2">
                           <Sparkles size={14} /> IDÉES SOUFFLÉES PAR LE GROUPE (IL/ELLE NE LE VOIT PAS)
                         </p>
-                        {savingId === selectedUser.id && <Loader2 size={16} className="animate-spin text-red-500" />}
                       </div>
-                      <textarea 
-                        key={selectedData.others} // Pour le temps réel
-                        className="w-full bg-transparent border-none text-xl md:text-2xl p-0 focus:ring-0 resize-none placeholder:text-slate-600 italic font-black text-white"
-                        rows={3}
-                        placeholder="Discutez des idées ici... Ex: Une carte cadeau (Dylan)"
-                        defaultValue={selectedData.others}
-                        onBlur={(e) => handleSaveOthers(selectedUser.id, e.target.value, selectedUser.wishlist)}
-                      />
+
+                      {/* Liste des bulles noires */}
+                      <div className="space-y-3 mb-6">
+                         {selectedData.others.length === 0 && <p className="opacity-40 text-lg">Aucune idée suggérée...</p>}
+                         {selectedData.others.map((idea: any) => (
+                          <div key={idea.id} className="bg-slate-800 border-2 border-slate-700 p-4 rounded-2xl shadow-[4px_4px_0px_0px_#000000] flex justify-between items-start gap-4 group">
+                            <div>
+                              <p className="text-xl leading-tight text-slate-100">{idea.text}</p>
+                              <p className="text-[10px] text-slate-400 mt-2">SOUFFLÉ PAR : {idea.authorName}</p>
+                            </div>
+                            <button onClick={() => deleteOtherIdea(selectedUser.id, idea.id, selectedUser.wishlist)} className="text-slate-600 hover:text-red-500 transition-colors p-1 opacity-0 group-hover:opacity-100"><Trash2 size={18} /></button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Ajouter une bulle noire */}
+                      <div className="bg-slate-800 p-3 rounded-2xl border-2 border-slate-700 flex items-center gap-2">
+                        <input 
+                          className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-sm text-white font-black italic placeholder:text-slate-500"
+                          placeholder={`Ajouter une idée pour ${selectedUser.name}...`} 
+                          value={newOtherText} onChange={(e) => setNewOtherText(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addOtherIdea(selectedUser.id, selectedUser.wishlist)}
+                        />
+                        <button onClick={() => addOtherIdea(selectedUser.id, selectedUser.wishlist)} className="px-3 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 flex items-center justify-center gap-2 text-xs">
+                          {savingId === selectedUser.id ? <Loader2 className="animate-spin" size={14} /> : "ENVOYER"}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
