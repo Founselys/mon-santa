@@ -3,7 +3,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, Lock, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
-// NOUVEAU : Fonction pour forcer le "https://" sur les liens
 const formatUrl = (url: string) => {
   if (!url) return '';
   const trimmed = url.trim();
@@ -13,7 +12,6 @@ const formatUrl = (url: string) => {
   return trimmed;
 };
 
-// Parser sécurisé (inchangé, on clone juste les listes pour éviter les bugs)
 const parseWishlist = (raw: any) => {
   const defaultData = { mine: [], others: [] };
   if (!raw) return defaultData;
@@ -51,6 +49,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [newMyText, setNewMyText] = useState("");
   const [newMyUrl, setNewMyUrl] = useState("");
   const [newOtherText, setNewOtherText] = useState("");
+  const [newOtherUrl, setNewOtherUrl] = useState(""); // NOUVEAU : État pour l'URL des autres
 
   const loadData = useCallback(async () => {
     try {
@@ -92,7 +91,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     return () => { supabase.removeChannel(channel); };
   }, [params.groupId, loadData]);
 
-  // LA CORRECTION EST ICI : On vérifie si Supabase refuse l'enregistrement
   const saveToDb = async (userId: string, dataObj: any) => {
     setSavingId(userId);
     const jsonStr = JSON.stringify(dataObj);
@@ -112,7 +110,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const addMyIdea = () => {
     if (!newMyText.trim()) return;
     const currentData = parseWishlist(me.wishlist);
-    // On utilise formatUrl ici pour corriger "amazon.com"
     currentData.mine.push({ id: Date.now().toString(), text: newMyText, url: formatUrl(newMyUrl) });
     saveToDb(me.id, currentData);
     setNewMyText(""); setNewMyUrl("");
@@ -127,9 +124,10 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const addOtherIdea = (targetId: string, currentWishlist: any) => {
     if (!newOtherText.trim()) return;
     const currentData = parseWishlist(currentWishlist);
-    currentData.others.push({ id: Date.now().toString(), text: newOtherText, authorName: me.name });
+    // NOUVEAU : On inclut l'URL formatée ici
+    currentData.others.push({ id: Date.now().toString(), text: newOtherText, authorName: me.name, url: formatUrl(newOtherUrl) });
     saveToDb(targetId, currentData);
-    setNewOtherText("");
+    setNewOtherText(""); setNewOtherUrl(""); // On réinitialise l'URL aussi
   };
 
   const deleteOtherIdea = (targetId: string, ideaId: string, currentWishlist: any) => {
@@ -146,7 +144,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const isLookingAtMyself = selectedUser.id === me.id;
   const selectedData = parseWishlist(selectedUser.wishlist);
 
-  // AUCUN CHANGEMENT SUR LE DESIGN CI-DESSOUS, C'EST 100% IDENTIQUE
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-black italic uppercase tracking-tighter text-slate-900">
       <div className="max-w-6xl mx-auto space-y-8">
@@ -199,6 +196,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
 
               <div className="space-y-8">
                 
+                {/* ZONE 1 : BULLES VERTES */}
                 <div className="bg-green-50 border-4 border-green-500 rounded-3xl p-6 relative">
                   <p className="text-xs text-green-700 mb-6 flex items-center gap-2">
                     <CheckCircle2 size={16} /> 
@@ -248,6 +246,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                   )}
                 </div>
 
+                {/* ZONE 2 : BULLES NOIRES */}
                 <div className="bg-slate-900 text-white border-4 border-slate-900 rounded-3xl p-6 relative transform rotate-1">
                   
                   {isLookingAtMyself ? (
@@ -270,6 +269,14 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                           <div key={idea.id} className="bg-slate-800 border-2 border-slate-700 p-4 rounded-2xl shadow-[4px_4px_0px_0px_#000000] flex justify-between items-start gap-4 group">
                             <div>
                               <p className="text-xl leading-tight text-slate-100">{idea.text}</p>
+                              
+                              {/* NOUVEAU : Affichage du lien sur les bulles noires */}
+                              {idea.url && (
+                                <a href={idea.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-slate-300 bg-slate-700 px-3 py-1 rounded-lg mt-2 text-[10px] hover:bg-slate-600 transition-colors border border-slate-600">
+                                  <ExternalLink size={12} /> VOIR LE LIEN
+                                </a>
+                              )}
+                              
                               <p className="text-[10px] text-slate-400 mt-2">SOUFFLÉ PAR : {idea.authorName}</p>
                             </div>
                             <button onClick={() => deleteOtherIdea(selectedUser.id, idea.id, selectedUser.wishlist)} className="text-slate-600 hover:text-red-500 transition-colors p-1 opacity-0 group-hover:opacity-100"><Trash2 size={18} /></button>
@@ -277,17 +284,28 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                         ))}
                       </div>
 
-                      <div className="bg-slate-800 p-3 rounded-2xl border-2 border-slate-700 flex items-center gap-2">
+                      {/* NOUVEAU : Input double avec Lien optionnel pour les bulles noires */}
+                      <div className="bg-slate-800 p-4 rounded-2xl border-2 border-slate-700">
                         <input 
-                          className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-sm text-white font-black italic placeholder:text-slate-500"
+                          className="w-full bg-transparent border-none p-0 mb-2 focus:ring-0 text-sm text-white font-black italic placeholder:text-slate-500"
                           placeholder={`Ajouter une idée pour ${selectedUser.name}...`} 
                           value={newOtherText} onChange={(e) => setNewOtherText(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && addOtherIdea(selectedUser.id, selectedUser.wishlist)}
                         />
-                        <button onClick={() => addOtherIdea(selectedUser.id, selectedUser.wishlist)} className="px-3 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 flex items-center justify-center gap-2 text-xs">
-                          {savingId === selectedUser.id ? <Loader2 className="animate-spin" size={14} /> : "ENVOYER"}
-                        </button>
+                        <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 border-t-2 border-slate-700 pt-2">
+                          <LinkIcon size={16} className="text-slate-500 hidden md:block" />
+                          <input 
+                            className="flex-1 bg-transparent border-none p-0 focus:ring-0 text-xs text-white font-black italic placeholder:text-slate-500"
+                            placeholder="Lien URL (Optionnel)"
+                            value={newOtherUrl} onChange={(e) => setNewOtherUrl(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addOtherIdea(selectedUser.id, selectedUser.wishlist)}
+                          />
+                          <button onClick={() => addOtherIdea(selectedUser.id, selectedUser.wishlist)} disabled={savingId === selectedUser.id} className="px-3 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 flex items-center justify-center gap-2 text-xs">
+                            {savingId === selectedUser.id ? <Loader2 className="animate-spin" size={14} /> : "ENVOYER"}
+                          </button>
+                        </div>
                       </div>
+                      
                     </div>
                   )}
                 </div>
