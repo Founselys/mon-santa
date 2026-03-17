@@ -10,18 +10,18 @@ const formatUrl = (url: string) => {
   return trimmed;
 };
 
-// NOUVEAU : Le parser de Wishlist intègre désormais un tableau "chat"
+// MODIFICATION : Le parser gère maintenant un objet "reactions" pour chaque idée dans "others"
 const parseWishlist = (raw: any) => {
   const defaultData = { mine: [], others: [], chat: [] };
   if (!raw) return defaultData;
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     let mine = Array.isArray(parsed?.mine) ? [...parsed.mine] : [];
-    let others = Array.isArray(parsed?.others) ? [...parsed.others] : [];
-    let chat = Array.isArray(parsed?.chat) ? [...parsed.chat] : []; // NOUVEAU
+    let others = Array.isArray(parsed?.others) ? parsed.others.map((o: any) => ({ ...o, reactions: o.reactions || {} })) : [];
+    let chat = Array.isArray(parsed?.chat) ? [...parsed.chat] : []; 
     
     if (parsed?.mine && !Array.isArray(parsed.mine) && parsed.mine.text) mine.push({ id: Date.now().toString(), text: parsed.mine.text, url: parsed.mine.url });
-    if (typeof parsed?.others === 'string' && parsed.others.trim() !== '') others.push({ id: Date.now().toString() + 'o', text: parsed.others, authorName: 'Le groupe' });
+    if (typeof parsed?.others === 'string' && parsed.others.trim() !== '') others.push({ id: Date.now().toString() + 'o', text: parsed.others, authorName: 'Le groupe', reactions: {} });
     
     return { mine, others, chat };
   } catch {
@@ -46,7 +46,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const [newOtherText, setNewOtherText] = useState("");
   const [newOtherUrl, setNewOtherUrl] = useState("");
   
-  // NOUVEAU : Chat
   const [newChatMessage, setNewChatMessage] = useState("");
 
   const [isDark, setIsDark] = useState(false);
@@ -123,7 +122,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const addOtherIdea = (targetId: string, currentWishlist: any) => {
     if (!newOtherText.trim()) return;
     const currentData = parseWishlist(currentWishlist);
-    currentData.others.push({ id: Date.now().toString(), text: newOtherText, authorName: me.name, url: formatUrl(newOtherUrl) });
+    currentData.others.push({ id: Date.now().toString(), text: newOtherText, authorName: me.name, url: formatUrl(newOtherUrl), reactions: {} });
     saveToDb(targetId, currentData);
     setNewOtherText(""); setNewOtherUrl("");
   };
@@ -134,7 +133,18 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     saveToDb(targetId, currentData);
   };
 
-  // NOUVEAU : Fonction pour envoyer un message dans le chat
+  // NOUVEAU : Fonction pour ajouter une réaction sur l'idée du rectangle noir
+  const addReaction = (targetId: string, ideaId: string, currentWishlist: any, emoji: string) => {
+    const currentData = parseWishlist(currentWishlist);
+    const ideaIndex = currentData.others.findIndex((idea: any) => idea.id === ideaId);
+    if (ideaIndex !== -1) {
+        if (!currentData.others[ideaIndex].reactions) currentData.others[ideaIndex].reactions = {};
+        const currentCount = currentData.others[ideaIndex].reactions[emoji] || 0;
+        currentData.others[ideaIndex].reactions[emoji] = currentCount + 1;
+        saveToDb(targetId, currentData);
+    }
+  };
+
   const sendChatMessage = (targetId: string, currentWishlist: any, isSanta: boolean) => {
     if (!newChatMessage.trim()) return;
     const currentData = parseWishlist(currentWishlist);
@@ -312,17 +322,39 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                       <div className="space-y-3 mb-6">
                          {selectedData.others.length === 0 && <p className="opacity-40 text-lg">Aucune idée suggérée...</p>}
                          {selectedData.others.map((idea: any) => (
-                          <div key={idea.id} className={`border-2 p-4 rounded-2xl flex justify-between items-start gap-4 group ${isDark ? 'bg-slate-700 border-slate-600 shadow-[4px_4px_0px_0px_#000000]' : 'bg-slate-800 border-slate-700 shadow-[4px_4px_0px_0px_#000000]'}`}>
-                            <div>
-                              <p className="text-xl leading-tight text-slate-100">{idea.text}</p>
-                              {idea.url && (
-                                <a href={idea.url} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg mt-2 text-[10px] transition-colors border ${isDark ? 'text-slate-200 bg-slate-600 hover:bg-slate-500 border-slate-500' : 'text-slate-300 bg-slate-700 hover:bg-slate-600 border-slate-600'}`}>
-                                  <ExternalLink size={12} /> VOIR LE LIEN
-                                </a>
-                              )}
-                              <p className="text-[10px] text-slate-400 mt-2">SOUFFLÉ PAR : {idea.authorName}</p>
+                          <div key={idea.id} className={`border-2 p-4 rounded-2xl flex flex-col gap-2 group ${isDark ? 'bg-slate-700 border-slate-600 shadow-[4px_4px_0px_0px_#000000]' : 'bg-slate-800 border-slate-700 shadow-[4px_4px_0px_0px_#000000]'}`}>
+                            
+                            {/* HAUT DE LA BULLE NOIRE (Texte + Corbeille) */}
+                            <div className="flex justify-between items-start gap-4">
+                                <div>
+                                <p className="text-xl leading-tight text-slate-100">{idea.text}</p>
+                                {idea.url && (
+                                    <a href={idea.url} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg mt-2 text-[10px] transition-colors border ${isDark ? 'text-slate-200 bg-slate-600 hover:bg-slate-500 border-slate-500' : 'text-slate-300 bg-slate-700 hover:bg-slate-600 border-slate-600'}`}>
+                                    <ExternalLink size={12} /> VOIR LE LIEN
+                                    </a>
+                                )}
+                                <p className="text-[10px] text-slate-400 mt-2">SOUFFLÉ PAR : {idea.authorName}</p>
+                                </div>
+                                <button onClick={() => deleteOtherIdea(selectedUser.id, idea.id, selectedUser.wishlist)} className={`transition-colors p-1 opacity-0 group-hover:opacity-100 ${isDark ? 'text-slate-400 hover:text-red-400' : 'text-slate-600 hover:text-red-500'}`}><Trash2 size={18} /></button>
                             </div>
-                            <button onClick={() => deleteOtherIdea(selectedUser.id, idea.id, selectedUser.wishlist)} className={`transition-colors p-1 opacity-0 group-hover:opacity-100 ${isDark ? 'text-slate-400 hover:text-red-400' : 'text-slate-600 hover:text-red-500'}`}><Trash2 size={18} /></button>
+
+                            {/* NOUVEAU : LA BARRE DE RÉACTIONS */}
+                            <div className={`flex flex-wrap gap-2 mt-2 pt-3 border-t ${isDark ? 'border-slate-600' : 'border-slate-700'}`}>
+                                {['👍', '👎', '😂', '💸'].map(emoji => {
+                                    const count = idea.reactions?.[emoji] || 0;
+                                    return (
+                                        <button
+                                            key={emoji}
+                                            onClick={() => addReaction(selectedUser.id, idea.id, selectedUser.wishlist, emoji)}
+                                            className={`text-xs px-2 py-1 rounded-lg border transition-all flex items-center gap-1.5 ${count > 0 ? (isDark ? 'bg-slate-600 border-slate-500 text-white' : 'bg-slate-700 border-slate-500 text-white') : (isDark ? 'bg-transparent border-slate-600 text-slate-400 hover:text-white hover:border-slate-500' : 'bg-transparent border-slate-700 text-slate-400 hover:text-white hover:border-slate-600')}`}
+                                        >
+                                            <span className="text-sm">{emoji}</span> 
+                                            {count > 0 && <span>{count}</span>}
+                                        </button>
+                                    )
+                                })}
+                            </div>
+
                           </div>
                         ))}
                       </div>
@@ -351,7 +383,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                   )}
                 </div>
 
-                {/* ZONE 3 NOUVELLE : CHAT ANONYME (Uniquement entre Moi et Ma Pioche) */}
+                {/* ZONE 3 : CHAT ANONYME */}
                 {(isLookingAtMyself || isMyTarget) && (
                     <div className={`border-4 rounded-3xl p-6 relative transform -rotate-1 ${isDark ? 'bg-blue-950/40 border-blue-800 text-blue-100' : 'bg-blue-50 border-blue-600 text-blue-900'}`}>
                         <div className="flex justify-between items-center mb-6">
@@ -366,8 +398,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                                 <p className="opacity-50 text-center py-4">Aucun message pour le moment...</p>
                             )}
                             {selectedData.chat.map((msg: any) => {
-                                // "santa" = message du Père Noël (Moi si isMyTarget, ou l'Inconnu si isLookingAtMyself)
-                                // "target" = message de la Pioche (Moi si isLookingAtMyself, ou ma Cible si isMyTarget)
                                 const isMessageFromMe = (isLookingAtMyself && msg.sender === 'target') || (isMyTarget && msg.sender === 'santa');
                                 
                                 return (
