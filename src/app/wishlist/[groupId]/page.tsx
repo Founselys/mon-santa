@@ -31,7 +31,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
       setGroupParticipants(participants);
       setGroupName(participants[0].groups.name);
       
-      const myInfo = participants.find(p => p.id === myId);
+      const myInfo = participants.find(p => String(p.id) === String(myId));
       setMe(myInfo);
     }
     setLoading(false);
