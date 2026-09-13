@@ -362,7 +362,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
 
               <div className="space-y-8">
                 
-                {/* ZONE 1 : ENVIES DU PARTICIPANT (BULLES VERTES) */}
+                {/* ZONE 1 : ENVIES DU PARTICIPANT */}
                 <div className={`border-4 rounded-3xl p-6 relative ${isDark ? 'bg-green-950/30 border-green-800' : 'bg-green-50 border-green-500'}`}>
                   <p className={`text-xs mb-6 flex items-center gap-2 ${isDark ? 'text-green-400' : 'text-green-700'}`}>
                     <CheckCircle2 size={16} /> 
@@ -555,22 +555,31 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                   </div>
                 )}
 
-                {/* ZONE 4 : CHAT 1-v-1 (SEULEMENT SI C'EST TA PIOCHE) */}
-                {isMyTarget && (
+                {/* ZONE 4 : CHAT 1-v-1 (PÈRE NOËL <-> CIBLE) */}
+                {(isMyTarget || isLookingAtMyself) && (
                     <div className={`border-4 rounded-3xl p-6 relative transform -rotate-1 ${isDark ? 'bg-blue-950/40 border-blue-800 text-blue-100' : 'bg-blue-50 border-blue-600 text-blue-900'}`}>
                         <div className="flex justify-between items-center mb-6">
                             <p className={`text-sm flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
                                 <MessageSquare size={20} /> 
-                                CHAT EN DIRECT AVEC {selectedUser.name} (TU ES ANONYME)
+                                {isMyTarget ? `CHAT EN DIRECT AVEC ${selectedUser.name} (TU ES ANONYME)` : `CHAT EN DIRECT AVEC TON PÈRE NOËL (IL EST ANONYME)`}
                             </p>
                         </div>
 
                         <div className="space-y-4 mb-6">
                             {selectedData.chat.length === 0 && (
-                                <p className="opacity-50 text-center py-4 text-xs">Pose-lui une question secrète sur ses goûts ou sa taille !</p>
+                                <p className="opacity-50 text-center py-4 text-xs">
+                                    {isMyTarget ? "Pose-lui une question secrète sur ses goûts ou sa taille !" : "Ton Père Noël secret ne t'a pas encore écrit..."}
+                                </p>
                             )}
                             {selectedData.chat.map((msg: any) => {
-                                const isMessageFromMe = msg.sender === 'santa';
+                                const isMessageFromMe = (isMyTarget && msg.sender === 'santa') || (isLookingAtMyself && msg.sender === 'target');
+                                
+                                let senderLabel = '';
+                                if (isMyTarget) {
+                                    senderLabel = msg.sender === 'santa' ? '🎅 TOI (PÈRE NOËL)' : `👤 ${selectedUser.name}`;
+                                } else {
+                                    senderLabel = msg.sender === 'santa' ? '🎅 TON PÈRE NOËL SECRET' : '👤 MOI';
+                                }
                                 
                                 return (
                                     <div key={msg.id} className={`flex ${isMessageFromMe ? 'justify-end' : 'justify-start'}`}>
@@ -580,7 +589,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                                             : (isDark ? 'bg-slate-800 border-slate-600 text-slate-200 shadow-[4px_4px_0px_0px_#0f172a]' : 'bg-white border-blue-300 text-blue-900 shadow-[4px_4px_0px_0px_#bfdbfe]')
                                         }`}>
                                             <p className="text-xs mb-1 opacity-70 flex items-center gap-1">
-                                                {msg.sender === 'santa' ? '🎅 TOI (PÈRE NOËL SECRET)' : `👤 ${selectedUser.name}`}
+                                                {senderLabel}
                                             </p>
                                             <p className="text-lg leading-tight">{msg.text}</p>
                                         </div>
@@ -592,12 +601,12 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                         <div className={`p-2 rounded-2xl border-2 flex items-center gap-2 ${isDark ? 'bg-slate-800 border-blue-800' : 'bg-white border-blue-200'}`}>
                             <input 
                                 className={`flex-1 bg-transparent border-none px-3 py-2 focus:ring-0 text-sm font-black italic ${isDark ? 'text-white placeholder:text-blue-700' : 'text-blue-900 placeholder:text-blue-300'}`}
-                                placeholder={`Écrire un message secrètement à ${selectedUser.name}...`} 
+                                placeholder={isMyTarget ? `Écrire un message secrètement à ${selectedUser.name}...` : `Répondre à ton Père Noël secret...`} 
                                 value={newChatMessage} 
                                 onChange={(e) => setNewChatMessage(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && sendChatMessage(selectedUser.id, selectedUser.wishlist, true)}
+                                onKeyDown={(e) => e.key === 'Enter' && sendChatMessage(selectedUser.id, selectedUser.wishlist, isMyTarget)}
                             />
-                            <button onClick={() => sendChatMessage(selectedUser.id, selectedUser.wishlist, true)} disabled={savingId === selectedUser.id} className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-500 transition-colors">
+                            <button onClick={() => sendChatMessage(selectedUser.id, selectedUser.wishlist, isMyTarget)} disabled={savingId === selectedUser.id} className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-500 transition-colors">
                                 {savingId === selectedUser.id ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
                             </button>
                         </div>
