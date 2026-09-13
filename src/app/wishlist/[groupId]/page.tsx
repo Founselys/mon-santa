@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useCallback } from 'react';
-import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, Lock, Plus, Trash2, Moon, Sun, BellRing, MessageSquare, Send } from 'lucide-react';
+import { Gift, ExternalLink, Link as LinkIcon, Loader2, CheckCircle2, User, Sparkles, Lock, Plus, Trash2, Moon, Sun, BellRing, MessageSquare, Send, Users, PartyPopper, Eye } from 'lucide-react';
 import { supabase } from '@/utils/supabase';
 
 const formatUrl = (url: string) => {
@@ -11,20 +11,21 @@ const formatUrl = (url: string) => {
 };
 
 const parseWishlist = (raw: any) => {
-  const defaultData = { mine: [], others: [], chat: [] };
+  const defaultData = { mine: [], others: [], chat: [], groupChat: [] };
   if (!raw) return defaultData;
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     let mine = Array.isArray(parsed?.mine) ? [...parsed.mine] : [];
     let others = Array.isArray(parsed?.others) ? parsed.others.map((o: any) => ({ ...o, reactions: o.reactions || {} })) : [];
     let chat = Array.isArray(parsed?.chat) ? [...parsed.chat] : []; 
+    let groupChat = Array.isArray(parsed?.groupChat) ? [...parsed.groupChat] : [];
     
     if (parsed?.mine && !Array.isArray(parsed.mine) && parsed.mine.text) mine.push({ id: Date.now().toString(), text: parsed.mine.text, url: parsed.mine.url });
     if (typeof parsed?.others === 'string' && parsed.others.trim() !== '') others.push({ id: Date.now().toString() + 'o', text: parsed.others, authorName: 'Le groupe', reactions: {} });
     
-    return { mine, others, chat };
+    return { mine, others, chat, groupChat };
   } catch {
-    if (typeof raw === 'string' && raw.trim() !== '') return { mine: [{ id: Date.now().toString(), text: raw, url: '' }], others: [], chat: [] };
+    if (typeof raw === 'string' && raw.trim() !== '') return { mine: [{ id: Date.now().toString(), text: raw, url: '' }], others: [], chat: [], groupChat: [] };
     return defaultData;
   }
 };
@@ -40,12 +41,18 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
 
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
+  // Animation Déballage Cadeau
+  const [showUnwrapModal, setShowUnwrapModal] = useState(false);
+  const [isUnwrapping, setIsUnwrapping] = useState(false);
+  const [hasRevealed, setHasRevealed] = useState(false);
+
   const [newMyText, setNewMyText] = useState("");
   const [newMyUrl, setNewMyUrl] = useState("");
   const [newOtherText, setNewOtherText] = useState("");
   const [newOtherUrl, setNewOtherUrl] = useState("");
   
   const [newChatMessage, setNewChatMessage] = useState("");
+  const [newGroupChatMessage, setNewGroupChatMessage] = useState("");
 
   const [isDark, setIsDark] = useState(false);
   const [isNudging, setIsNudging] = useState(false);
@@ -66,6 +73,14 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
         setGroupName(myData.groups?.name || "Mon Groupe");
         setGroupBudget(myData.groups?.budget || ""); 
         setSelectedUserId(myData.target_id);
+
+        // Vérification si la pioche a déjà été révélée dans cette session
+        const alreadyRevealed = localStorage.getItem(`revealed_${myData.id}`);
+        if (!alreadyRevealed) {
+          setShowUnwrapModal(true);
+        } else {
+          setHasRevealed(true);
+        }
 
         const { data: groupData } = await supabase.from('participants').select('*').eq('group_id', myData.group_id).order('name', { ascending: true });
         if (groupData) setGroupParticipants(groupData);
@@ -89,6 +104,15 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     const newMode = !isDark;
     setIsDark(newMode);
     localStorage.setItem('theme', newMode ? 'dark' : 'light');
+  };
+
+  const handleUnwrapGift = () => {
+    setIsUnwrapping(true);
+    setTimeout(() => {
+      setIsUnwrapping(false);
+      setHasRevealed(true);
+      if (me?.id) localStorage.setItem(`revealed_${me.id}`, 'true');
+    }, 1200);
   };
 
   const saveToDb = async (userId: string, dataObj: any) => {
@@ -121,7 +145,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   const addOtherIdea = (targetId: string, currentWishlist: any) => {
     if (!newOtherText.trim()) return;
     const currentData = parseWishlist(currentWishlist);
-    currentData.others.push({ id: Date.now().toString(), text: newOtherText, authorName: me.name, url: formatUrl(newOtherUrl), reactions: {} });
+    currentData.others.push({ id: Date.now().toString(), text: newOtherText, authorName: 'Un ami du groupe', url: formatUrl(newOtherUrl), reactions: {} });
     saveToDb(targetId, currentData);
     setNewOtherText(""); setNewOtherUrl("");
   };
@@ -132,21 +156,17 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     saveToDb(targetId, currentData);
   };
 
-  // MODIFICATION : On enregistre l'ID de l'utilisateur pour empêcher le spam
   const toggleReaction = (targetId: string, ideaId: string, currentWishlist: any, emoji: string) => {
     const currentData = parseWishlist(currentWishlist);
     const ideaIndex = currentData.others.findIndex((idea: any) => idea.id === ideaId);
     
     if (ideaIndex !== -1) {
         if (!currentData.others[ideaIndex].reactions) currentData.others[ideaIndex].reactions = {};
-        
         const currentReactions = currentData.others[ideaIndex].reactions;
         
-        // Si l'utilisateur avait déjà cliqué sur CE bouton, on l'enlève (Toggle Off)
         if (currentReactions[me.id] === emoji) {
             delete currentReactions[me.id];
         } else {
-            // Sinon, on remplace son ancienne réaction par la nouvelle (Un seul vote par personne)
             currentReactions[me.id] = emoji;
         }
         
@@ -154,6 +174,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     }
   };
 
+  // Chat 1-v-1 (Père Noël <-> Pioche)
   const sendChatMessage = (targetId: string, currentWishlist: any, isSanta: boolean) => {
     if (!newChatMessage.trim()) return;
     const currentData = parseWishlist(currentWishlist);
@@ -165,6 +186,20 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
     });
     saveToDb(targetId, currentData);
     setNewChatMessage("");
+  };
+
+  // Chat 100% Anonyme de Groupe pour une personne
+  const sendGroupChatMessage = (targetId: string, currentWishlist: any) => {
+    if (!newGroupChatMessage.trim()) return;
+    const currentData = parseWishlist(currentWishlist);
+    currentData.groupChat.push({
+      id: Date.now().toString(),
+      text: newGroupChatMessage,
+      senderAlias: 'Lutin Anonyme 🎅',
+      date: new Date().toISOString()
+    });
+    saveToDb(targetId, currentData);
+    setNewGroupChatMessage("");
   };
 
   const sendNudgeEmail = async (targetUser: any) => {
@@ -185,6 +220,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   if (dbError) return <div className="p-20 text-center font-black uppercase italic text-red-600 border-4 border-red-600 m-10">ERREUR : {dbError}</div>;
   if (!me) return <div className="p-20 text-center font-black uppercase italic text-red-600 border-4 border-red-600 m-10">Accès Refusé</div>;
 
+  const targetUserObj = groupParticipants.find(p => p.id === me.target_id);
   const selectedUser = groupParticipants.find(p => p.id === selectedUserId) || me;
   const isLookingAtMyself = selectedUser.id === me.id;
   const isMyTarget = selectedUser.id === me.target_id;
@@ -193,7 +229,74 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
   return (
     <div className={`min-h-screen p-4 md:p-8 font-black italic uppercase tracking-tighter transition-colors duration-300 ${isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
       
-      <div className="absolute top-4 right-4 md:top-8 md:right-8 z-50">
+      {/* MODAL D'ANIMATION : DÉBALLAGE DU CADEAU */}
+      {showUnwrapModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className={`max-w-lg w-full border-[6px] rounded-[3rem] p-8 md:p-12 text-center relative shadow-[16px_16px_0px_0px_rgba(220,38,38,1)] ${isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-900 text-slate-900'}`}>
+            
+            {!hasRevealed ? (
+              <div className="space-y-8">
+                <span className="inline-block bg-red-600 text-white px-6 py-2 rounded-full text-xs font-black tracking-wider">
+                  TIRAGE AU SORT EFFECTUÉ 🎅
+                </span>
+                
+                <h2 className="text-4xl md:text-5xl leading-none">
+                  PRÊT À DÉCOUVRIR TA PIOCHE ?
+                </h2>
+
+                <div className="py-6">
+                  <div 
+                    onClick={handleUnwrapGift}
+                    className={`w-32 h-32 mx-auto bg-yellow-400 rounded-3xl border-[6px] border-slate-900 flex items-center justify-center cursor-pointer hover:scale-110 transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] active:translate-y-2 active:shadow-none ${isUnwrapping ? 'animate-bounce scale-125' : 'animate-pulse'}`}
+                  >
+                    <Gift size={64} className="text-slate-900 stroke-[2.5]" />
+                  </div>
+                  <p className="text-xs text-slate-400 mt-4">CLIQUE SUR LE PAQUET POUR L'OUVRIR !</p>
+                </div>
+
+                <button 
+                  onClick={handleUnwrapGift} 
+                  disabled={isUnwrapping}
+                  className="w-full py-5 bg-red-600 hover:bg-red-500 text-white text-2xl border-[4px] border-slate-900 rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-none transition-all flex items-center justify-center gap-3"
+                >
+                  {isUnwrapping ? <Loader2 className="animate-spin" size={32} /> : "DÉBALLER MON CADEAU 🎁"}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-8 animate-in zoom-in-50 duration-500">
+                <div className="inline-block p-4 bg-green-400 rounded-full border-4 border-slate-900">
+                  <PartyPopper size={48} className="text-slate-900" />
+                </div>
+                
+                <div>
+                  <p className="text-sm text-slate-400 mb-2">TU DOIS OFFRIR UN CADEAU À :</p>
+                  <h2 className="text-6xl md:text-7xl text-red-500 leading-none underline decoration-wavy underline-offset-8">
+                    {targetUserObj?.name || "TA PIOCHE"}
+                  </h2>
+                </div>
+
+                <p className="text-xs text-slate-400">
+                  Rends-toi sur sa wishlist pour découvrir ce qui lui ferait plaisir !
+                </p>
+
+                <button 
+                  onClick={() => {
+                    setShowUnwrapModal(false);
+                    if (targetUserObj?.id) setSelectedUserId(targetUserObj.id);
+                  }} 
+                  className="w-full py-5 bg-green-500 hover:bg-green-400 text-slate-900 text-xl font-black border-[4px] border-slate-900 rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-all"
+                >
+                  VOIR SA WISHLIST 🚀
+                </button>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+
+      {/* HEADER PAGE */}
+      <div className="absolute top-4 right-4 md:top-8 md:right-8 z-40">
         <button onClick={toggleTheme} className={`p-3 rounded-xl border-4 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] ${isDark ? 'bg-slate-800 text-white border-slate-700 hover:bg-slate-700' : 'bg-white text-slate-900 border-slate-900 hover:bg-slate-100'}`}>
             {isDark ? <Sun size={24} /> : <Moon size={24} />}
         </button>
@@ -204,14 +307,21 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
         <div className={`flex flex-col md:flex-row justify-between items-center gap-4 border-b-4 pb-6 ${isDark ? 'border-slate-700' : 'border-slate-900'}`}>
           <div>
             <div className="bg-red-600 text-white px-4 py-1 rounded-full text-sm inline-block mb-2 shadow-sm">{groupName} 🎄</div>
-            {groupBudget && <div className="ml-3 bg-yellow-400 text-yellow-900 px-4 py-1 rounded-full text-sm inline-block mb-2 shadow-sm">BUDGET : {groupBudget}</div>}
+            {groupBudget && <div className="ml-3 bg-yellow-400 text-yellow-900 px-4 py-1 rounded-full text-sm inline-block mb-2 shadow-sm">BUDGET : {groupBudget} €</div>}
             <h1 className="text-3xl md:text-5xl leading-none">ESPACE DE <span className="text-red-500 underline decoration-4 underline-offset-4">{me.name}</span></h1>
           </div>
-          <p className={`text-xs max-w-xs text-right hidden md:block ${isDark ? 'text-slate-400' : 'opacity-50'}`}>CLIQUE SUR UN PARTICIPANT POUR VOIR SA LISTE OU LUI SOUFFLER DES IDÉES.</p>
+          
+          <button 
+            onClick={() => setShowUnwrapModal(true)} 
+            className="bg-yellow-400 text-slate-900 px-4 py-2 rounded-xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-0.5 transition-all flex items-center gap-2 text-xs"
+          >
+            <Gift size={18} /> REDÉCOUVRIR MA PIOCHE
+          </button>
         </div>
 
         <div className="flex flex-col md:flex-row gap-8">
           
+          {/* LISTE DES PARTICIPANTS */}
           <div className="w-full md:w-1/3 flex flex-col gap-4">
             <h2 className="text-xl flex items-center gap-2"><User size={20}/> PARTICIPANTS</h2>
             <div className="flex flex-col gap-3">
@@ -238,6 +348,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
             </div>
           </div>
 
+          {/* CONTENU DE LA FICHE SÉLECTIONNÉE */}
           <div className="w-full md:w-2/3">
             <div className={`border-4 rounded-[3rem] p-6 md:p-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] relative overflow-hidden ${isDark ? 'bg-slate-900 border-slate-700 shadow-[12px_12px_0px_0px_#0f172a]' : 'bg-white border-slate-900 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]'}`}>
               
@@ -251,7 +362,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
 
               <div className="space-y-8">
                 
-                {/* ZONE 1 : BULLES VERTES */}
+                {/* ZONE 1 : ENVIES DU PARTICIPANT (BULLES VERTES) */}
                 <div className={`border-4 rounded-3xl p-6 relative ${isDark ? 'bg-green-950/30 border-green-800' : 'bg-green-50 border-green-500'}`}>
                   <p className={`text-xs mb-6 flex items-center gap-2 ${isDark ? 'text-green-400' : 'text-green-700'}`}>
                     <CheckCircle2 size={16} /> 
@@ -312,19 +423,19 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                   )}
                 </div>
 
-                {/* ZONE 2 : BULLES NOIRES */}
+                {/* ZONE 2 : IDÉES SOUFFLÉES PAR LE GROUPE */}
                 <div className={`border-4 rounded-3xl p-6 relative transform rotate-1 ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-slate-900 text-white border-slate-900'}`}>
                   {isLookingAtMyself ? (
                     <div className="text-center py-8 opacity-80 space-y-4">
                       <Lock className="mx-auto text-red-500 mb-2" size={40} />
                       <p className={`text-xl ${isDark ? 'text-slate-300' : 'text-slate-300'}`}>ESPACE SECRET</p>
-                      <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>LES IDÉES QUE LE GROUPE TE PRÉPARE SONT CACHÉES ICI.<br/>ON GARDE LA SURPRISE ! 🤫</p>
+                      <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>LES IDÉES ET DISCUSSIONS QUE LE GROUPE PRÉPARE SONT CACHÉES ICI.<br/>ON GARDE LA SURPRISE ! 🤫</p>
                     </div>
                   ) : (
                     <div>
                       <div className="flex justify-between items-center mb-6">
                         <p className="text-xs text-red-500 flex items-center gap-2">
-                          <Sparkles size={14} /> IDÉES SOUFFLÉES PAR LE GROUPE (IL/ELLE NE LE VOIT PAS)
+                          <Sparkles size={14} /> IDÉES SOUFFLÉES PAR LE GROUPE (IL/ELLE NE VOIT RIEN)
                         </p>
                       </div>
 
@@ -341,15 +452,12 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                                     <ExternalLink size={12} /> VOIR LE LIEN
                                     </a>
                                 )}
-                                <p className="text-[10px] text-slate-400 mt-2">SOUFFLÉ PAR : {idea.authorName}</p>
                                 </div>
                                 <button onClick={() => deleteOtherIdea(selectedUser.id, idea.id, selectedUser.wishlist)} className={`transition-colors p-1 opacity-0 group-hover:opacity-100 ${isDark ? 'text-slate-400 hover:text-red-400' : 'text-slate-600 hover:text-red-500'}`}><Trash2 size={18} /></button>
                             </div>
 
-                            {/* BARRE DE RÉACTIONS MISE À JOUR (Système de vote unique) */}
                             <div className={`flex flex-wrap gap-2 mt-2 pt-3 border-t ${isDark ? 'border-slate-600' : 'border-slate-700'}`}>
                                 {['👍', '👎', '😂', '💸'].map(emoji => {
-                                    // On recalcule le compte et on vérifie si l'utilisateur actuel a cliqué
                                     let count = 0;
                                     let hasReacted = false;
                                     
@@ -357,8 +465,6 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                                         Object.entries(idea.reactions).forEach(([userId, selectedEmoji]) => {
                                             if (selectedEmoji === emoji) count++;
                                             if (userId === me.id && selectedEmoji === emoji) hasReacted = true;
-                                            // Rétrocompatibilité (au cas où il reste d'anciennes réactions sous forme de chiffres)
-                                            if (userId === emoji && typeof selectedEmoji === 'number') count += selectedEmoji;
                                         });
                                     }
 
@@ -389,7 +495,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                       <div className={`p-4 rounded-2xl border-2 ${isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-800 border-slate-700'}`}>
                         <input 
                           className="w-full bg-transparent border-none p-0 mb-2 focus:ring-0 text-sm text-white font-black italic placeholder:text-slate-500"
-                          placeholder={`Ajouter une idée pour ${selectedUser.name}...`} 
+                          placeholder={`Souffler une idée pour ${selectedUser.name}...`} 
                           value={newOtherText} onChange={(e) => setNewOtherText(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && addOtherIdea(selectedUser.id, selectedUser.wishlist)}
                         />
@@ -410,22 +516,61 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                   )}
                 </div>
 
-                {/* ZONE 3 : CHAT ANONYME */}
-                {(isLookingAtMyself || isMyTarget) && (
+                {/* ZONE 3 : CHAT ANONYME DU GROUPE POUR CE PARTICIPANT */}
+                {!isLookingAtMyself && (
+                  <div className={`border-4 rounded-3xl p-6 relative ${isDark ? 'bg-indigo-950/40 border-indigo-800 text-indigo-100' : 'bg-indigo-50 border-indigo-600 text-indigo-900'}`}>
+                    <div className="flex justify-between items-center mb-6">
+                      <p className={`text-sm flex items-center gap-2 ${isDark ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                        <Users size={20} /> 
+                        CHAT DU GROUPE POUR {selectedUser.name} (100% ANONYME)
+                      </p>
+                    </div>
+
+                    <div className="space-y-3 mb-6 max-h-60 overflow-y-auto pr-2">
+                      {selectedData.groupChat.length === 0 && (
+                        <p className="opacity-50 text-center py-4 text-xs">Aucun message de groupe pour l'instant... Discutez entre vous pour trouver le cadeau parfait !</p>
+                      )}
+                      {selectedData.groupChat.map((msg: any) => (
+                        <div key={msg.id} className="bg-slate-800 text-white p-3 rounded-2xl border-2 border-slate-700 shadow-sm">
+                          <p className="text-[10px] text-yellow-400 font-black flex items-center gap-1 mb-1">
+                            🎅 {msg.senderAlias || "Lutin Anonyme"}
+                          </p>
+                          <p className="text-sm leading-tight">{msg.text}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className={`p-2 rounded-2xl border-2 flex items-center gap-2 ${isDark ? 'bg-slate-800 border-indigo-800' : 'bg-white border-indigo-200'}`}>
+                      <input 
+                        className={`flex-1 bg-transparent border-none px-3 py-2 focus:ring-0 text-sm font-black italic ${isDark ? 'text-white placeholder:text-indigo-600' : 'text-indigo-900 placeholder:text-indigo-300'}`}
+                        placeholder={`Discuter en secret pour ${selectedUser.name}...`} 
+                        value={newGroupChatMessage} 
+                        onChange={(e) => setNewGroupChatMessage(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && sendGroupChatMessage(selectedUser.id, selectedUser.wishlist)}
+                      />
+                      <button onClick={() => sendGroupChatMessage(selectedUser.id, selectedUser.wishlist)} disabled={savingId === selectedUser.id} className="p-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-500 transition-colors">
+                        {savingId === selectedUser.id ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ZONE 4 : CHAT 1-v-1 (SEULEMENT SI C'EST TA PIOCHE) */}
+                {isMyTarget && (
                     <div className={`border-4 rounded-3xl p-6 relative transform -rotate-1 ${isDark ? 'bg-blue-950/40 border-blue-800 text-blue-100' : 'bg-blue-50 border-blue-600 text-blue-900'}`}>
                         <div className="flex justify-between items-center mb-6">
                             <p className={`text-sm flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
                                 <MessageSquare size={20} /> 
-                                {isLookingAtMyself ? "MESSAGES DE TON PÈRE NOËL SECRET" : "CHAT ANONYME AVEC TA PIOCHE"}
+                                CHAT EN DIRECT AVEC {selectedUser.name} (TU ES ANONYME)
                             </p>
                         </div>
 
                         <div className="space-y-4 mb-6">
                             {selectedData.chat.length === 0 && (
-                                <p className="opacity-50 text-center py-4">Aucun message pour le moment...</p>
+                                <p className="opacity-50 text-center py-4 text-xs">Pose-lui une question secrète sur ses goûts ou sa taille !</p>
                             )}
                             {selectedData.chat.map((msg: any) => {
-                                const isMessageFromMe = (isLookingAtMyself && msg.sender === 'target') || (isMyTarget && msg.sender === 'santa');
+                                const isMessageFromMe = msg.sender === 'santa';
                                 
                                 return (
                                     <div key={msg.id} className={`flex ${isMessageFromMe ? 'justify-end' : 'justify-start'}`}>
@@ -435,7 +580,7 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                                             : (isDark ? 'bg-slate-800 border-slate-600 text-slate-200 shadow-[4px_4px_0px_0px_#0f172a]' : 'bg-white border-blue-300 text-blue-900 shadow-[4px_4px_0px_0px_#bfdbfe]')
                                         }`}>
                                             <p className="text-xs mb-1 opacity-70 flex items-center gap-1">
-                                                {msg.sender === 'santa' ? '🎅 PÈRE NOËL SECRET' : `👤 ${selectedUser.name}`}
+                                                {msg.sender === 'santa' ? '🎅 TOI (PÈRE NOËL SECRET)' : `👤 ${selectedUser.name}`}
                                             </p>
                                             <p className="text-lg leading-tight">{msg.text}</p>
                                         </div>
@@ -447,16 +592,15 @@ export default function WishlistPage({ params }: { params: { groupId: string } }
                         <div className={`p-2 rounded-2xl border-2 flex items-center gap-2 ${isDark ? 'bg-slate-800 border-blue-800' : 'bg-white border-blue-200'}`}>
                             <input 
                                 className={`flex-1 bg-transparent border-none px-3 py-2 focus:ring-0 text-sm font-black italic ${isDark ? 'text-white placeholder:text-blue-700' : 'text-blue-900 placeholder:text-blue-300'}`}
-                                placeholder="Écrire un message..." 
+                                placeholder={`Écrire un message secrètement à ${selectedUser.name}...`} 
                                 value={newChatMessage} 
                                 onChange={(e) => setNewChatMessage(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && sendChatMessage(selectedUser.id, selectedUser.wishlist, isMyTarget)}
+                                onKeyDown={(e) => e.key === 'Enter' && sendChatMessage(selectedUser.id, selectedUser.wishlist, true)}
                             />
-                            <button onClick={() => sendChatMessage(selectedUser.id, selectedUser.wishlist, isMyTarget)} disabled={savingId === selectedUser.id} className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-500 transition-colors">
+                            <button onClick={() => sendChatMessage(selectedUser.id, selectedUser.wishlist, true)} disabled={savingId === selectedUser.id} className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-500 transition-colors">
                                 {savingId === selectedUser.id ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
                             </button>
                         </div>
-                        {isMyTarget && <p className="text-[10px] text-center mt-3 opacity-60">Ton identité restera cachée, elle ne verra que "Père Noël Secret".</p>}
                     </div>
                 )}
 
