@@ -21,7 +21,6 @@ export default function SecretSanta() {
   
   const [isDark, setIsDark] = useState(false);
 
-  // MODIFICATION : exclude est maintenant un tableau vide au lieu d'une chaîne
   const [participants, setParticipants] = useState<{id: number, name: string, email: string, exclude: string[]}[]>([
     { id: 1, name: '', email: '', exclude: [] },
     { id: 2, name: '', email: '', exclude: [] },
@@ -58,14 +57,49 @@ export default function SecretSanta() {
     if (!error && data) setMesGroupes(data);
   };
 
+  // Correctif : recherche insensible aux majuscules/minuscules et requête en 2 étapes
   const fetchMesParticipations = async (email: string | undefined) => {
     if (!email) return;
-    const { data, error } = await supabase
-      .from('participants')
-      .select('*, groups(*)')
-      .eq('email', email)
-      .order('created_at', { ascending: false });
-    if (!error && data) setMesParticipations(data);
+    const cleanEmail = email.trim().toLowerCase();
+
+    try {
+      const { data: partData, error: partError } = await supabase
+        .from('participants')
+        .select('*')
+        .ilike('email', cleanEmail)
+        .order('created_at', { ascending: false });
+
+      if (partError || !partData || partData.length === 0) {
+        setMesParticipations([]);
+        return;
+      }
+
+      const groupIds = partData.map(p => p.group_id).filter(Boolean);
+      
+      if (groupIds.length === 0) {
+        setMesParticipations([]);
+        return;
+      }
+
+      const { data: groupsData, error: groupError } = await supabase
+        .from('groups')
+        .select('*')
+        .in('id', groupIds);
+
+      if (groupError || !groupsData) {
+        setMesParticipations([]);
+        return;
+      }
+
+      const combined = partData.map(part => ({
+        ...part,
+        groups: groupsData.find(g => g.id === part.group_id) || null
+      }));
+
+      setMesParticipations(combined);
+    } catch (err) {
+      console.error("Erreur lors de la récupération des participations :", err);
+    }
   };
 
   const handleLogin = () => {
@@ -117,7 +151,6 @@ export default function SecretSanta() {
       let echec = false;
 
       for (let p of participants) {
-        // MODIFICATION : Vérifie si le nom de la cible est dans le tableau d'exclusions
         let valides = ciblesPossibles.filter(c => c.email !== p.email && !p.exclude.includes(c.name));
         if (valides.length === 0) { echec = true; break; }
         let choix = valides[Math.floor(Math.random() * valides.length)];
@@ -136,14 +169,14 @@ export default function SecretSanta() {
       const { data: group, error: groupError } = await supabase.from('groups').insert([{ name: groupName, organizer_id: user.id, delete_at: eventDate || null, budget: budget }]).select().single();
       if (groupError) { alert("Erreur Création Groupe : " + groupError.message); setLoading(false); return; }
 
-      const { data: dbParticipants, error: partError } = await supabase.from('participants').insert(participants.map(p => ({ group_id: group.id, name: p.name, email: p.email }))).select();
+      const { data: dbParticipants, error: partError } = await supabase.from('participants').insert(participants.map(p => ({ group_id: group.id, name: p.name, email: p.email.trim().toLowerCase() }))).select();
       if (partError) { alert("Erreur Ajout Participants : " + partError.message); setLoading(false); return; }
       
       const emailsToSend = [];
       for (let p of participants) {
-        const monProfilDb = dbParticipants!.find(db => db.email === p.email);
+        const monProfilDb = dbParticipants!.find(db => db.email.toLowerCase() === p.email.trim().toLowerCase());
         const cibleEmail = resultats[p.email];
-        const maCibleDb = dbParticipants!.find(db => db.email === cibleEmail);
+        const maCibleDb = dbParticipants!.find(db => db.email.toLowerCase() === cibleEmail.trim().toLowerCase());
         
         await supabase.from('participants').update({ target_id: maCibleDb!.id }).eq('id', monProfilDb!.id);
         emailsToSend.push({ to: p.email, name: p.name, targetName: maCibleDb!.name, groupName, groupId: group.id, participantId: monProfilDb!.id });
@@ -217,6 +250,7 @@ export default function SecretSanta() {
               </div>
             </div>
 
+            {/* SECTION PARTICIPATIONS */}
             {mesParticipations.length > 0 && (
               <div className="space-y-6">
                 <div className="flex items-center gap-4">
@@ -241,6 +275,7 @@ export default function SecretSanta() {
               </div>
             )}
 
+            {/* SECTION ORGANISATEUR */}
             <div className="space-y-6 pt-8">
               <div className="flex items-center gap-4">
                 <div className={`h-[4px] flex-1 ${isDark ? 'bg-slate-700' : 'bg-slate-900'}`}></div>
@@ -256,7 +291,7 @@ export default function SecretSanta() {
                     setSelectedGroup(group); 
                     setEditBudget(group.budget || ''); 
                     setEditGroupName(group.name || ''); 
-                    const monP = group.participants?.find((p: any) => p.email === user?.email);
+                    const monP = group.participants?.find((p: any) => p.email?.toLowerCase() === user?.email?.toLowerCase());
                     setMyParticipantInfo(monP);
                     setStep('view'); 
                   }} className={`${isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-white border-slate-900 hover:bg-red-50'} p-6 md:p-8 rounded-3xl border-[4px] flex justify-between items-center hover:-translate-y-1 transition-all cursor-pointer shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] group`}>
@@ -307,7 +342,6 @@ export default function SecretSanta() {
                     <input placeholder="Prénom" className={`flex-1 min-w-[120px] p-3 text-lg rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-slate-700 border-slate-600 focus:border-white text-white' : 'bg-slate-50 border-slate-200 focus:border-slate-900 text-slate-900'}`} value={p.name} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, name: e.target.value} : item))} />
                     <input placeholder="Email" className={`flex-1 min-w-[150px] p-3 text-lg rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-slate-700 border-slate-600 focus:border-white text-white' : 'bg-slate-50 border-slate-200 focus:border-slate-900 text-slate-900'}`} value={p.email} onChange={(e) => setParticipants(participants.map(item => item.id === p.id ? {...item, email: e.target.value} : item))} />
                     
-                    {/* NOUVELLE ZONE D'EXCLUSIONS MULTIPLES */}
                     <div className="flex-1 min-w-[200px] flex flex-col gap-2">
                         <select className={`w-full p-3 text-sm rounded-xl border-2 outline-none transition-colors ${isDark ? 'bg-red-950 text-red-400 border-red-900 focus:border-red-500' : 'bg-red-50 text-red-600 border-red-200 focus:border-red-600'}`} 
                             value="" 
@@ -336,7 +370,6 @@ export default function SecretSanta() {
                     {participants.length > 3 && <button onClick={() => setParticipants(participants.filter(item => item.id !== p.id))} className={`p-3 rounded-xl transition-colors ${isDark ? 'text-slate-500 hover:text-red-400 bg-slate-700 hover:bg-red-950' : 'text-slate-400 hover:text-red-600 bg-slate-100 hover:bg-red-100'}`}><X size={20}/></button>}
                   </div>
                 ))}
-                {/* MODIFICATION : Ajout d'un tableau vide pour exclude au clic sur Ajouter */}
                 <button onClick={() => setParticipants([...participants, {id: Date.now(), name: '', email: '', exclude: []}])} className={`mt-4 px-6 py-3 rounded-xl transition-colors flex items-center gap-2 border-2 ${isDark ? 'bg-slate-700 text-white hover:bg-slate-600 border-slate-600' : 'bg-slate-900 text-white hover:bg-slate-800 border-slate-900'}`}><Plus size={18}/> AJOUTER UN AMI</button>
               </div>
               
@@ -437,7 +470,7 @@ export default function SecretSanta() {
             </div>
             <h2 className="text-6xl md:text-8xl mb-10 leading-none">C'EST ENVOYÉ ! 🎅</h2>
             <p className={`text-xl mb-12 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Chaque participant va recevoir un e-mail avec son lien magique.</p>
-            <button onClick={() => setStep('home')} className={`bg-red-600 text-white px-16 py-6 rounded-3xl hover:bg-red-500 transition-all border-[6px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-2xl ${isDark ? 'border-slate-800' : 'border-slate-900'}`}>RETOUR À L'ACCUEIL</button>
+            <button onClick={() => setStep('home')} className={`bg-red-600 text-white px-16 py-6 rounded-3xl hover:bg-red-500 transition-all border-[6px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] text-2xl ${isDark ? 'border-slate-800' : 'border-slate-900'}`}>RETOUR À L'ACCUEIL</button>
           </div>
         )}
       </main>
