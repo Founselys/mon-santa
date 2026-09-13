@@ -7,16 +7,17 @@ export async function POST(req: Request) {
   try {
     const { emails } = await req.json();
 
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL 
-      ? (process.env.NEXT_PUBLIC_SITE_URL.startsWith('http') ? process.env.NEXT_PUBLIC_SITE_URL : `https://${process.env.NEXT_PUBLIC_SITE_URL}`)
-      : 'http://localhost:3000';
+    // 🌟 LA MAGIE EST ICI : Détection automatique et dynamique du domaine
+    const host = req.headers.get('host') || 'founselys.com';
+    const protocol = host.includes('localhost') ? 'http' : 'https';
+    const baseUrl = `${protocol}://${host}`;
 
     const results = [];
 
     for (const emailData of emails) {
-      // On ignore targetName dans le mail pour garder l'effet de surprise
       const { to, name, groupName, groupId, participantId } = emailData;
 
+      // Le lien se construira tout seul correctement (founselys.com en ligne)
       const magicLink = `${baseUrl}/wishlist/${groupId}?p=${participantId}`;
 
       const { data, error } = await resend.emails.send({
