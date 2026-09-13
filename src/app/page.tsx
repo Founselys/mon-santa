@@ -57,49 +57,14 @@ export default function SecretSanta() {
     if (!error && data) setMesGroupes(data);
   };
 
-  // Correctif : recherche insensible aux majuscules/minuscules et requête en 2 étapes
   const fetchMesParticipations = async (email: string | undefined) => {
     if (!email) return;
-    const cleanEmail = email.trim().toLowerCase();
-
-    try {
-      const { data: partData, error: partError } = await supabase
-        .from('participants')
-        .select('*')
-        .ilike('email', cleanEmail)
-        .order('created_at', { ascending: false });
-
-      if (partError || !partData || partData.length === 0) {
-        setMesParticipations([]);
-        return;
-      }
-
-      const groupIds = partData.map(p => p.group_id).filter(Boolean);
-      
-      if (groupIds.length === 0) {
-        setMesParticipations([]);
-        return;
-      }
-
-      const { data: groupsData, error: groupError } = await supabase
-        .from('groups')
-        .select('*')
-        .in('id', groupIds);
-
-      if (groupError || !groupsData) {
-        setMesParticipations([]);
-        return;
-      }
-
-      const combined = partData.map(part => ({
-        ...part,
-        groups: groupsData.find(g => g.id === part.group_id) || null
-      }));
-
-      setMesParticipations(combined);
-    } catch (err) {
-      console.error("Erreur lors de la récupération des participations :", err);
-    }
+    const { data, error } = await supabase
+      .from('participants')
+      .select('*, groups(*)')
+      .eq('email', email)
+      .order('created_at', { ascending: false });
+    if (!error && data) setMesParticipations(data);
   };
 
   const handleLogin = () => {
