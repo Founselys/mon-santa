@@ -28,6 +28,13 @@ export default function SecretSanta() {
   ]);
   const [revealedTargets, setRevealedTargets] = useState<{ [key: string]: boolean }>({});
 
+  const getUserFirstName = (user: any) => {
+    if (!user) return '';
+    const name = user.user_metadata?.first_name || user.user_metadata?.full_name || user.user_metadata?.name;
+    if (name) return name.split(' ')[0];
+    return user.email ? user.email.split('@')[0] : '';
+  };
+
   useEffect(() => {
     if (localStorage.getItem('theme') === 'dark') setIsDark(true);
 
@@ -169,26 +176,38 @@ export default function SecretSanta() {
       
       <nav className="bg-red-600 border-b-[6px] border-slate-900 px-6 py-4 sticky top-0 z-50 text-white shadow-sm">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
+          
+          {/* NOUVEAU LOGO CADEAU NET ET DÉTAILLÉ */}
           <div className="flex items-center gap-3 font-black text-white text-3xl tracking-tighter cursor-pointer hover:scale-105 transition-transform origin-left" onClick={() => setStep('home')}>
-            <Gift fill="currentColor" size={36} className="drop-shadow-md" /> SANTAPP
+            <div className="bg-yellow-400 p-2 rounded-2xl border-4 border-slate-900 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex items-center justify-center">
+              <Gift size={26} className="text-slate-900 stroke-[2.5]" />
+            </div>
+            <span>SANTAPP</span>
           </div>
+
           <div className="flex items-center gap-4">
             <button onClick={toggleTheme} className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                 {isDark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             
             {user ? (
-              <button onClick={async () => { 
-                  await supabase.auth.signOut(); 
-                  setUser(null); 
-                  setMesGroupes([]); 
-                  setMesParticipations([]); 
-                  setSelectedGroup(null); 
-                  setStep('home'); 
-              }} 
-              className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center gap-2 text-xs">
-                <LogOut size={18} /> <span className="hidden md:block">DÉCONNEXION</span>
-              </button>
+              <div className="flex items-center gap-3">
+                {/* BONJOUR PRÉNOM */}
+                <span className="hidden sm:inline-block text-xs font-black text-yellow-300 bg-slate-900/80 px-3 py-2 rounded-xl border-2 border-slate-900">
+                  👋 BONJOUR, {getUserFirstName(user)}
+                </span>
+                <button onClick={async () => { 
+                    await supabase.auth.signOut(); 
+                    setUser(null); 
+                    setMesGroupes([]); 
+                    setMesParticipations([]); 
+                    setSelectedGroup(null); 
+                    setStep('home'); 
+                }} 
+                className="p-3 bg-slate-900 text-white rounded-xl border-4 border-slate-900 hover:bg-white hover:text-slate-900 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center gap-2 text-xs">
+                  <LogOut size={18} /> <span className="hidden md:block">DÉCONNEXION</span>
+                </button>
+              </div>
             ) : (
               <a href="/login" className={`p-3 rounded-xl border-4 transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center gap-2 text-xs font-black ${isDark ? 'bg-slate-800 text-white border-slate-700 hover:bg-slate-700' : 'bg-white text-slate-900 border-slate-900 hover:bg-slate-100'}`}>
                 SE CONNECTER
