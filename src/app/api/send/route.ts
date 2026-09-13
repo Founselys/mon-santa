@@ -7,18 +7,17 @@ export async function POST(req: Request) {
   try {
     const { emails } = await req.json();
 
-    // On récupère le domaine du site
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL 
       ? (process.env.NEXT_PUBLIC_SITE_URL.startsWith('http') ? process.env.NEXT_PUBLIC_SITE_URL : `https://${process.env.NEXT_PUBLIC_SITE_URL}`)
       : 'http://localhost:3000';
 
+    const results = [];
+
     for (const emailData of emails) {
       const { to, name, groupName, groupId, participantId } = emailData;
-
-      // Lien magique vers l'espace secret
       const magicLink = `${baseUrl}/wishlist/${groupId}?p=${participantId}`;
 
-      await resend.emails.send({
+      const { data, error } = await resend.emails.send({
         from: 'SantApp <onboarding@resend.dev>',
         to: [to],
         subject: `🎁 Ton tirage Secret Santa pour ${groupName} est prêt !`,
@@ -31,7 +30,7 @@ export async function POST(req: Request) {
             </p>
             
             <div style="background-color: #fef08a; border: 3px solid #0f172a; border-radius: 16px; padding: 16px; margin: 20px 0; text-align: center;">
-              <p style="font-size: 18px; font-weight: 900; margin: 0; color: #0f172a; font-style: italic; uppercase;">
+              <p style="font-size: 18px; font-weight: 900; margin: 0; color: #0f172a; font-style: italic; text-transform: uppercase;">
                 🤫 Ton cadeau secret t'attend !
               </p>
               <p style="font-size: 13px; margin-top: 6px; margin-bottom: 0; color: #475569;">
@@ -50,10 +49,26 @@ export async function POST(req: Request) {
           </div>
         `,
       });
+
+      if (error) {
+        console.error(`Erreur d'envoi à ${to} :`, error);
+        results.push({ to, success: false, error });
+      } else {
+        results.push({ to, success: true, data });
+      }
     }
 
-    return NextResponse.json({ success: true });
+    const hasErrors = results.some(r => !r.success);
+    if (hasErrors) {
+      const firstError = results.find(r => !r.success)?.error;
+      return NextResponse.json({ 
+        error: `Resend a refusé l'envoi : ${firstError?.message || JSON.stringify(firstError)}` 
+      }, { status: 400 });
+    }
+
+    return NextResponse.json({ success: true, results });
   } catch (error: any) {
+    console.error("Erreur serveur API /api/send :", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
